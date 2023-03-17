@@ -1,0 +1,13 @@
+#  These are the packages that we are using in Python
+
+jupyter
+matplotlib
+numpy
+pandas
+scipy
+seaborn
+scikit-learn
+statsmodels
+python-dateutil
+openpyxl
+biopython
