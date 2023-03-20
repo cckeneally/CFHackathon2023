@@ -32,12 +32,36 @@ Patient <- sapply(spl, "[", 1)
 table(Patient)
 Date <- sapply(spl, "[", 2)
 
+# set contig as rowname
+
+rownames(coverage_df) <- coverage_df$Contig
+
+
+meta_data_df <- data.frame(Patient = Patient[-1], Date = Date[-1])
+
 
 patients_with_multiple_samples <- names(table(Patient)[table(Patient) > 1])
 total_samples_multi_patient <- sum(table(Patient)[table(Patient) > 1])
 
 
 patient_788707_df <- coverage_df[,grepl("788707", colnames(coverage_df))]
+
+
+
+# create matrix
+
+cts <- as.matrix(coverage_df[,-1])
+
+
+# factor
+
+
+
+dds.overall <- DESeqDataSetFromMatrix(countData = cts,
+                              colData = meta_data_df
+
+
+
 
 
 ```
