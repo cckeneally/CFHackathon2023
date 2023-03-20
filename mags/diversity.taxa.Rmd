@@ -1,0 +1,3172 @@
+---
+title: "whale shark biogeography"
+author: "Michael Doane"
+date: "22 May 2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Set-up datasheet
+```{r}
+#packages <- c("vegan", "dplyr", "tidyr", 'data.table', "readxl", "clustsig", "RcColorBrewer", "pairwiseAdonis", "metagenomeSeq")
+#bio_pkgs <- c("phyloseq", "microbiome", "clustsig", "metagenomeSeq")
+
+# install:
+#install.packages(setdiff(packages, rownames(installed.packages()))) 
+
+#if (!require("BiocManager", quietly = TRUE))
+    #install.packages("BiocManager")
+#BiocManager::install(bio_pkgs)
+
+
+
+library(vegan)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(phyloseq)
+library(microbiome)
+library(data.table)
+library(readxl)
+#library(clustsig)
+library(RColorBrewer)
+library(pairwiseAdonis)
+library(DESeq2)
+library(reshape2)
+library(viridis)
+
+computer <- 'flinders' #flinders or personal
+
+if (computer == 'flinders') { 
+  comp.dir <- 'C:/Users/doan0033/'
+} else {   
+  comp.dir <- 'C:/Users/MichaelDoane/'
+}
+  
+file.dir <- paste0(comp.dir, 'Dropbox/network analysis/')
+ws.meta <- read_excel(paste(file.dir, 'analysis', 'sample.meta.xlsx', sep = '/'), sheet = 'overlap')
+seq.meta <- read_excel(paste(file.dir, 'analysis', 'sample.meta.xlsx', sep = '/'), sheet = 'seq.meta')
+r.source <- paste(comp.dir, 'Dropbox/IMOS_project/r_markdown', sep = '/')
+source (paste(r.source, 'common.scripts', 'theme_mike_doane.r', sep = "/")) # Theme Mike Doane for ggplot
+source (paste(r.source, 'common.scripts', 'theme_mike_doane1.r', sep = "/")) # Theme Mike Doane for ggplot
+group.colors <- tibble (location = c('Cancun', 'Lapaz', 'Ningaloo', 'Philippines', 'Tanzania'), color = c('#CC6677','#AA4499','#DDCC77','#009988', '#4477AA'))
+ocean.colors <- tibble (ocean = c('Atlantic', 'Indian', 'Pacific'), color = c('#CC6677', '#4477AA', '#DDCC77'))
+population.colors <- tibble (population = c('Atlantic', 'Indo-Pacific'), color = c('#cc6677', '#4477AA'))
+
+
+#created metadata in this analysis
+master.meta <- c('ws.meta', 'seq.meta', 'check', 'df.meta', 'group.colors', 'ocean.colors', 'population.colors', 'group.assignment', 'all.t', 'all.out', 'all.red.temp', 'all.red.temp.t')
+
+
+#dplyr::filter(taxa != c("LaPazWS6", "LaPazWSB", "LaPazWSF")) %>%
+```
+
+Main code chunk for pulling and organizing data into R
+```{r}
+
+##### Flags for the code chunk below --- Read before running code chunk #####
+types <- 'taxa' # 'taxa' or 'function'
+print.data <- 'no' #'yes' to print data to designated folder/ 'no' for no print
+trim <- 'no' #do you want to filter out those with a mean of <=100
+filter.check <- 'no' #yes or no filter out main marine organisms
+transformation <- 'proportion' #proportion, chord, hellinger
+
+file.type <- c('Taxafinal2020', 'function sept 29 condensed ss2/new')
+group.taxa <- 'family' #order, family, genus, species
+group.func <- 'Subsystem.Level.2' #Subsystem.Level.1, Subsystem.Level.2, Subsystem.Level.3, Function
+
+
+################## STARTS HERE ##################
+if (types == 'taxa') {
+  col <- 1:8 
+  title <- group.taxa
+  sample.name <- 'taxa'
+  group <- group.taxa
+  } else {
+    col <- 1:4
+    title <- group.func
+    sample.name <- 'function'
+    group <- group.func
+}
+
+{ 
+if (types == 'taxa') {x <- 1} 
+else {x <- 2}
+}
+
+if (types == 'taxa') {
+  files <- list.files (paste0 (file.dir, '/', file.type[x]), pattern = '.donotchange') 
+  names <- c('cancun', 'lapaz', 'ningaloo', 'philippines', 'tanzania', 'water')
+  file.list <- list () 
+#i = 2
+for (i in 1:length(files)) { 
+  temp <- read_excel (paste0 (file.dir, '/', file.type[x], '/', files[i]))
+  temp <- temp %>% pivot_longer (cols = -c(col), names_to = 'sample', 'abund') %>% mutate (sample.site = names[i]) # for taxa -c(1:8); for function -c(1:4)
+  file.list[[names[i]]] <- temp
+}
+} else {
+  files <- list.files (paste0 (file.dir, '/', file.type[x]), pattern = 'func.new.xlsx') #pattern = '.donotchange' or sept 29
+  names <- c('Cancun', 'Lapaz', 'Ningaloo', 'Philippines', 'Tanzania')
+  file.list <- list ()
+
+#i = 5
+for (i in 1:length(files)) { 
+  temp <- read_excel (paste0 (file.dir, '/', file.type[x], '/', files[i]), sheet = 'all')
+  temp <- temp %>% pivot_longer (cols = -c(col), names_to = 'sample', 'abund') %>% mutate (sample.site = names[i]) # for taxa -c(1:8); for function -c(1:4)
+  file.list[[names[i]]] <- temp
+}
+}
+
+all <- do.call ('rbind', file.list)
+all <- as.data.frame(all)
+
+if (types == 'taxa') {
+  all <- all %>%
+    semi_join (., ws.meta, by = c('sample' = 'taxa'))
+  
+  group.assignment <- all %>% 
+    dplyr::select (superkingdom, phylum, class, order, family, genus, species, taxid) %>% 
+    mutate (taxonomy = paste (superkingdom, phylum, class,order, family,genus,species,taxid, sep = ';')) %>%
+    distinct (taxonomy, .keep_all = T) %>% 
+    rownames_to_column ('name') %>% 
+    dplyr::select (-name)
+    
+} else {
+  all <- all %>%
+    semi_join (., ws.meta, by = c('sample' = 'function'))
+  
+  group.assignment <- all %>% 
+    dplyr::select (starts_with ('Subsystem'), Function) %>%
+    mutate (subsystem = paste (Subsystem.Level.1, Subsystem.Level.2, Subsystem.Level.3, Function, sep = ';')) %>%
+    distinct (subsystem, .keep_all = T) %>% 
+    rownames_to_column ('name') %>% 
+    dplyr::select (-name, -subsystem) 
+    
+}
+
+  if (print.data == 'yes'& types == 'taxa') { 
+    all.t <- all %>%
+      mutate (taxonomy = paste (superkingdom, phylum, class,order, family,genus,species,taxid, sep = ';')) %>%
+      group_by (sample) %>%
+      mutate (sample_total = sum(value), value_prop = value/sample_total) %>%
+      dplyr::select (-c(superkingdom, phylum, class,order, family,genus,species,taxid, sample.site,value, sample_total)) %>%
+      group_by(sample) %>%
+      distinct (taxonomy, .keep_all = T) %>%
+      pivot_wider (names_from = sample, values_from = value_prop, values_fill = c(value=0))
+    
+    write.csv (all.t, paste0 (file.dir, 'analysis/temp_docs/taxa.all.out.csv')) 
+} else if (print.data == 'no' & types == 'taxa') {
+  all.t <- all %>%
+      mutate (taxonomy = paste (superkingdom, phylum, class,order, family,genus,species,taxid, sep = ';')) %>%
+      group_by (sample) %>%
+      mutate (sample_total = sum(value), value_prop = value/sample_total) %>%
+      dplyr::select (-c(superkingdom, phylum, class,order, family,genus,species,taxid, sample.site,value, sample_total)) %>%
+      group_by(sample) %>%
+      distinct (taxonomy, .keep_all = T) %>%
+      pivot_wider (names_from = sample, values_from = value_prop, values_fill = c(value=0))
+    
+} else if (print.data == 'yes'& types == 'function') {
+    all.t <- all  %>% 
+    mutate (sub = paste (Subsystem.Level.1, Subsystem.Level.2, Subsystem.Level.3, Function, sep = ';')) %>%
+    group_by (sample) %>%
+    mutate (sample_total = sum(value), value_prop = value/sample_total) %>%
+    dplyr::select (-c(starts_with ('Subsystem'), Function, sample.site, value, sample_total)) %>% 
+    group_by (sample) %>% 
+    distinct (sub, .keep_all = T) %>% 
+    pivot_wider (names_from = sample, values_from = value_prop, values_fill = c(value = 0)) 
+    
+    write.csv (all.t, paste0 (file.dir, 'analysis/temp_docs/func.all.out.csv'))
+} else if (print.data == 'no' & types == 'function') { 
+  all.t <- all  %>% 
+    mutate (sub = paste (Subsystem.Level.1, Subsystem.Level.2, Subsystem.Level.3, Function, sep = ';')) %>%
+    group_by (sample) %>%
+    mutate (sample_total = sum(value), value_prop = value/sample_total) %>%
+    dplyr::select (-c(starts_with ('Subsystem'), Function, sample.site, value, sample_total)) %>% 
+    group_by (sample) %>% 
+    distinct (sub, .keep_all = T) %>% 
+    pivot_wider (names_from = sample, values_from = value_prop, values_fill = c(value = 0)) 
+  }
+
+#all.together <- all %>% group_by (sample, taxid) %>% mutate (tax.value = sum(value)) %>% distinct(sample, taxid, .keep_all = T) %>% dplyr::select(-c(sample.site, value)) %>% pivot_wider (names_from = sample, values_from = tax.value, values_fill = c(tax.value = 0))
+#write.csv (all.together, paste0 (file.dir, '/', file.type[x], '/', 'taxa.all.csv'))
+
+df.meta <- all %>% dplyr::select (sample, sample.site) %>% distinct (sample,sample.site)
+
+##### make a collapsed dataset to the specific level indicated by flag 'group' from above #####
+{ 
+if (trim == 'yes' & types == 'taxa') { 
+  print(paste0(group, ' : ', types, ' : ', trim))
+  what.group <- (paste0(group, ' : ', types, ' : ', trim))
+  y <- group.taxa
+  all.out <- all %>% 
+    group_by (sample, !!rlang::sym(y)) %>% 
+    mutate (group.sum = sum (value, na.rm = T)) %>% 
+    distinct (sample, !!rlang::sym(y), .keep_all = T) %>% 
+    ungroup () %>% 
+    group_by (!!rlang::sym(y)) %>% 
+    mutate (group.avg = mean (group.sum, na.rm = T)) %>% 
+    filter (group.avg >= 100) %>% 
+    arrange(desc(group.avg)) %>% 
+    dplyr::select (c(y, sample, group.sum)) %>% 
+    pivot_wider (names_from = sample, values_from = group.sum, values_fill = c(group.sum = 0))
+  } else if (trim == 'no' & types == 'taxa') {
+    print(paste0(group, ' : ', types, ' : ', trim))
+    what.group <- (paste0(group, ' : ', types, ' : ', trim))
+    y <- group.taxa
+    all.out <- all %>% group_by (sample, !!rlang::sym(y)) %>% 
+      mutate (group.sum = sum (value, na.rm = T)) %>% 
+      distinct (sample, !!rlang::sym(y), .keep_all = T) %>% 
+      ungroup () %>% 
+      dplyr::select (c(y, sample, group.sum)) %>% 
+      pivot_wider (names_from = sample, values_from = group.sum, values_fill = c(group.sum = 0))
+  }  else if (trim == 'yes' & types == 'function')  { 
+    print(paste0(group, ' : ', types, ' : ', trim))
+    what.group <- (paste0(group, ' : ', types, ' : ', trim))
+    y <- group.func
+    all.out <- all %>% 
+      group_by (sample, !!rlang::sym(y)) %>% 
+      mutate (group.sum = sum (value, na.rm = T)) %>% 
+      distinct (sample, !!rlang::sym(y), .keep_all = T) %>% ungroup () %>% 
+      group_by (!!rlang::sym(y)) %>% mutate (group.avg = mean (group.sum, na.rm = T)) %>% 
+      filter (group.avg >= 100) %>% arrange(desc(group.avg)) %>% 
+      dplyr::select (c(y, sample, group.sum)) %>% 
+      pivot_wider (names_from = sample, values_from = group.sum, values_fill = c(group.sum = 0))
+  } else  { 
+    print(paste0(group, ' : ', types, ' : ', trim))
+    what.group <- (paste0(group, ' : ', types, ' : ', trim))
+    y <- group.func
+    all.out <- all %>% group_by (sample, !!rlang::sym(y)) %>% 
+      mutate (group.sum = sum (value, na.rm = T)) %>% 
+      distinct (sample, !!rlang::sym(y), .keep_all = T) %>% 
+      ungroup () %>% 
+      dplyr::select (c(y, sample, group.sum)) %>% 
+      pivot_wider (names_from = sample, values_from = group.sum, values_fill = c(group.sum = 0))
+  }
+
+}
+
+if (types == 'taxa' && filter.check == 'yes') { 
+all.red.temp <- all.out %>% 
+  pivot_longer (-group, names_to = 'sample', values_to = 'abund') %>% 
+  filter (!(!!rlang::sym(group)) %in% c('f:Pelagibacteraceae', 'f:Synechococcaceae', 'f:Prochloraceae')) %>%
+  group_by (sample, !!rlang::sym(group)) %>% 
+  mutate (group.sum = sum(abund)) %>% 
+  filter (group.sum > 0) %>% 
+  dplyr::select (-group.sum) %>% 
+  pivot_wider (names_from = 'sample', values_from = 'abund', values_fill = c('abund' = 0)) %>% 
+  column_to_rownames(group)
+} else {  
+all.red.temp <- all.out %>% 
+  pivot_longer (-group, names_to = 'sample', values_to = 'abund') %>% 
+  group_by (sample, !!rlang::sym(group)) %>% 
+  mutate (group.sum = sum(abund)) %>% 
+  filter (group.sum > 0) %>% 
+  dplyr::select (-group.sum) %>% 
+  pivot_wider (names_from = 'sample', values_from = 'abund', values_fill = c('abund' = 0)) %>% 
+  column_to_rownames(group)
+}
+
+if (types == "taxa") {
+  all.red.temp <- all.red.temp %>% dplyr::select (-LaPazWS6)
+  ws.meta <- ws.meta %>% filter (taxa !='LaPazWS6')
+} else if (types == "function") { 
+  all.red.temp <- all.red.temp %>% dplyr::select(-lp.shark.5)
+  ws.meta <- ws.meta %>% filter (`function` !='lp.shark.5')
+}
+
+all.red.temp.transposed <- t(all.red.temp)
+
+########## Make dissimilarity matrix and long format dissimilarity dataframe
+#matrices need to be samples are rows and variables as columns
+if (transformation == 'proportion') { 
+temp.trans <- decostand (all.red.temp.transposed, method = 'total', MARGIN = 1) # Margin 1 = rows, Margin 2 = columns
+} else if (transformation == 'chord') { 
+temp.trans <- BiodiversityR::disttransform(all.red.temp.tranposed, method="chord")
+} else if (transformation == 'hellinger') {
+temp.trans <- decostand (all.red.temp.transposed, method = 'hellinger', MARGIN = 1)
+}
+
+temp.trans<- as.data.frame(temp.trans)
+temp.dist <- vegdist (temp.trans, method = 'bray')
+
+long.dissimilarity <- reshape2::melt(as.matrix(temp.dist), varnames = c("row", "col"))
+long.dissimilarity <- long.dissimilarity %>% filter (!value == 0)
+
+if (types == 'taxa') {
+  long.dissimilarity <- long.dissimilarity %>% left_join (., (ws.meta %>% dplyr::select (taxa, location)), by = c('row'='taxa')) %>% left_join (., (ws.meta %>% dplyr::select (taxa, location)), by = c('col'='taxa'))
+} else if (types == 'function') {
+  long.dissimilarity <- long.dissimilarity %>% left_join (., (ws.meta %>% dplyr::select (`function`, location)), by = c('row'='function')) %>% left_join (., (ws.meta %>% dplyr::select (`function`, location)), by= c('col'='function'))
+}
+
+#long.dissimilarity <- long.dissimilarity %>% dplyr::mutate (location = ifelse (location.x == location.y, location.x, 'different'))
+# ggplot (long.dissimilarity %>% filter (!location== 'different'), aes (location, value)) +
+#    geom_boxplot () +
+#    theme_classic ()
+
+# long.dissimilarity.dunn <- long.dissimilarity %>% filter (!location == 'different')
+# dunn.test::dunn.test(long.dissimilarity.dunn$value, long.dissimilarity.dunn$location, method = 'bh')
+
+# stats::TukeyHSD(long.dissimilarity.dunn$value, long.dissimilarity.dunn$location)
+
+
+#check that the names of the groups are not misspelled causing two groups to occur#
+check <- all.red.temp %>% rownames_to_column ('groups') %>% pull (groups)
+print (sort(check))
+
+print(master.meta)
+
+```
+#####
+Make a mean abundance table and save to desktop
+#####
+```{r}
+open.file <- list.files (pattern = paste0(types, '.csv'), paste0(file.dir, 'network.final.data/jody_optimised_clusters/'))
+cluster.df <- read.csv (paste0(file.dir, 'network.final.data/jody_optimised_clusters/', open.file))
+
+###### Make mean abundance table #######
+all.mean.abund <- all.red.temp %>% 
+  rownames_to_column(group) %>%
+  pivot_longer (-group, names_to = 'sample', values_to = 'abund') %>% 
+  left_join (., (ws.meta %>% dplyr::select(types, location) %>% dplyr::rename ('sample' = 1)), by = c('sample')) %>%
+  group_by (sample) %>%
+  mutate (sample.total = sum(abund), group.prop = abund/sample.total) %>%
+  group_by (location, !!rlang::sym(group)) %>% 
+  mutate (mean.loc.abund = mean(group.prop)) %>% 
+  dplyr::select(-c(sample, abund, sample.total, group.prop)) %>%
+  distinct(location, !!rlang::sym(group), .keep_all = T)
+
+write.csv (all.mean.abund, paste0(file.dir, '/analysis/location.', types, '.mean.prop.csv'))
+```
+#####
+Make datasheet with all diversity included
+#####
+```{r}
+#Cluster Analysis - individual samples
+##### takes forever #####
+##### all samples - SIMPROF clustering
+#####A#####
+indiv.hclust <- hclust (temp.dist, method = 'average')
+plot(indiv.hclust)
+cluster <- simprof(data=temp, method.distance="braycurtis")
+pl.color <- simprof.plot(cluster)
+
+######
+##### Merged samples into location SIMPROF clustering
+######
+all.red.temp.cond <- all.red.temp %>% 
+  rownames_to_column(group) %>%
+  pivot_longer (-group, names_to = 'sample', values_to = 'abund') %>% 
+  left_join (., (ws.meta %>% dplyr::select (types, location) %>% 
+                   dplyr::rename ('names' = types)), by = c('sample' = 'names')) %>% 
+  group_by (location, !!rlang::sym(group)) %>% 
+  mutate (site.sum = mean(abund)) %>% 
+  filter (site.sum > 0) %>% 
+  dplyr::select(-c(abund, sample)) %>% 
+  distinct (location, !!rlang::sym(group), .keep_all = T) %>% 
+  pivot_wider (names_from = !!rlang::sym(group), values_from = site.sum, values_fill = c(site.sum = 0)) %>% 
+  column_to_rownames('location')
+temp.merged.avg <- all.red.temp.cond
+temp.merged.avg <- decostand (all.red.temp.cond, method = 'total', MARGIN = 1) # df: Samples as Rows, Cat as Column
+temp.merged.dist <- vegdist (temp.merged.avg, method = 'bray')
+
+# Cluster Analysis - Merged location
+clustering <- hclust (temp.merged.dist, method = 'single')
+plot(clustering)
+cluster <- simprof(temp.merged.avg, method.distance="braycurtis")
+pl.color <- simprof.plot(cluster)
+out <- cluster$hclust %>% set(cluster$hclust,'labels_cex', 3) %>% plot(main (paste0 (types, ':', group)))
+
+par(cex=1, mar=c(5, 8, 4, 1))
+plot(cluster$hclust, xlab="", ylab="", main="", sub="", axes=FALSE)
+par(cex=2)
+title(xlab="sites", ylab="bray-curtis distance", main=paste0 (types, ':', group))
+axis(2)
+```
+
+######### Visualize multivariate data ################
+######### Multivariate analysis ######################
+```{r}
+#######################
+##### MDS ANalysis ####
+#######################
+
+#temp.pa <- decostand(all.red.temp.t, method = 'total')
+
+mds.analysis <- metaMDS (temp.trans, distance = 'bray', k = 2, autotransform = F, trymax = 1000)
+mds_xy <- data.frame(mds.analysis$points)
+mds_xy <- rownames_to_column(mds_xy, "sample")
+
+check.df <- temp.trans %>% rownames_to_column("taxa") %>% select(1:5) %>% full_join (ws.meta, by = "taxa")
+
+#by location
+mds_loc <- left_join (mds_xy, (ws.meta %>% dplyr::select (types, location, sample_type, location_1) %>% dplyr::rename ('sample' = 1)), by = "sample" )
+mds_loc <- mds_loc %>% mutate (location = recode (location, Lapaz = 'La Paz'))
+
+mds.paper <- ggplot (mds_loc %>% mutate (location = factor(location, levels = c ("Cancun", "Tanzania", "Ningaloo", "Philippines", "La Paz", "water"))), aes (MDS1, MDS2, color = location)) +
+    geom_point (size = 7) +
+    scale_color_manual(name = 'Location', values = group.colors$color) +
+    stat_ellipse () +
+    #theme (legend.position = c(0.95, 0.95), legend.justification = c("right", "top")) +
+    theme_mike_doane () +
+    #ggtitle (paste0 (types, ': ', group, '; trim: ', trim, '; stress = ', round(mds.analysis$stress, 2))) +
+    theme(axis.text.x=element_text(angle=90, size=30, vjust=0.5, hjust = 1),
+        axis.text.y=element_text(angle=45, size=30, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_text (size = 40),
+        axis.title.y = element_text(size = 40),
+        legend.title=element_text(size=30), 
+        legend.text=element_text(size=30),
+        strip.text.x = element_text(size = 30))
+
+# SI figure for comparing water to whale shark skin microbiomes
+mds.paper <- ggplot (mds_loc %>% mutate (location_1 = factor(location_1, levels = c ("WSCancun","waterCancun", "WSLapaz", "waterLapaz", "WSNingaloo", "waterNingaloo", "WSPhilippines", "waterPhilippines", "WSTanzania", "waterTanzania"))), aes (MDS1, MDS2, color = location_1, shape = sample_type)) +
+    geom_point (size = 7) +
+    #scale_color_manual(name = 'Location', values = group.colors$color) +
+    #stat_ellipse (group = mds_loc$sample_type) +
+    #theme (legend.position = c(0.95, 0.95), legend.justification = c("right", "top")) +
+    theme_mike_doane () +
+    #ggtitle (paste0 (types, ': ', group, '; trim: ', trim, '; stress = ', round(mds.analysis$stress, 2))) +
+    theme(axis.text.x=element_text(angle=90, size=30, vjust=0.5, hjust = 1),
+        axis.text.y=element_text(angle=45, size=30, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_text (size = 40),
+        axis.title.y = element_text(size = 40),
+        legend.title=element_text(size=30), 
+        legend.text=element_text(size=30),
+        strip.text.x = element_text(size = 30))
+
+#by ocean
+mds_oc <- left_join (mds_xy, (ws.meta %>% dplyr::select (types, ocean) %>% dplyr::rename ('sample' = 1)), by = "sample" )
+ggplot (mds_oc %>% mutate (ocean = factor(ocean, c('Atlantic', 'Pacific', 'Indian'))), aes (MDS1, MDS2, color = ocean)) +
+    geom_point (size = 7) +
+    scale_color_manual(name = group.colors$ocean, values = group.colors$color) +
+    stat_ellipse () +
+    #theme (legend.position = c(0.95, 0.95), legend.justification = c("right", "top")) +
+    theme_mike_doane () +
+    ggtitle (paste0 (types, ': ', group, '; trim: ', trim, '; stress = ', round(mds.analysis$stress, 2))) +
+    theme(axis.text.x=element_text(angle=90, size=30, vjust=0.5, hjust = 1),
+        axis.text.y=element_text(angle=45, size=30, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_text (size = 40),
+        axis.title.y = element_text(size = 40),
+        legend.title=element_text(size=30), 
+        legend.text=element_text(size=30),
+        strip.text.x = element_text(size = 30))
+#by population 
+mds_pop <- left_join (mds_xy, (ws.meta %>% dplyr::select (types, population) %>% dplyr::rename ('sample' = 1)), by = "sample" )
+ggplot (mds_pop %>% mutate (population = factor(population, c('Atlantic', 'Indo_Pacific'))), aes (MDS1, MDS2, color = population)) +
+    geom_point (size = 7) +
+    scale_color_manual(name = group.colors$population, values = group.colors$color) +
+    stat_ellipse () +
+    #theme (legend.position = c(0.95, 0.95), legend.justification = c("right", "top")) +
+    theme_mike_doane () +
+    ggtitle (paste0 (types, ': ', group, '; trim: ', trim, '; stress = ', round(mds.analysis$stress, 2))) +
+    theme(axis.text.x=element_text(angle=90, size=30, vjust=0.5, hjust = 1),
+        axis.text.y=element_text(angle=45, size=30, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_text (size = 40),
+        axis.title.y = element_text(size = 40),
+        legend.title=element_text(size=30), 
+        legend.text=element_text(size=30),
+        strip.text.x = element_text(size = 30))
+
+
+#######################
+#### PCoA analysis ####
+#######################
+
+pc.analysis <- ape::pcoa (temp.dist)
+biplot(pc.analysis)
+pcoa_xy <- data.frame(pc.analysis$vectors[,1:2])
+pcoa_xy <- rownames_to_column(pcoa_xy, "sample")
+pcoa_xy <- left_join (pcoa_xy, (ws.meta %>% dplyr::select (types, location) %>% dplyr::rename ('sample' = 1)), by = "sample" )
+pcoa_xy$sample <- as.factor(pcoa_xy$sample) 
+pcoa_xy$location <- as.factor(pcoa_xy$location)
+
+ggplot (pcoa_xy %>% mutate (location = factor(location, levels = c ("Cancun", "Lapaz", "Ningaloo", "Philippines", "Tanzania"))), aes (Axis.1, Axis.2, color = location)) +
+    geom_point (size = 7) +
+    scale_color_manual(name = group.colors$location, values = group.colors$color) +
+    stat_ellipse () +
+    #theme (legend.position = c(0.95, 0.95), legend.justification = c("right", "top")) +
+    theme_mike_doane () +
+    ggtitle (paste0 (types, ':', group, '; trim: ', trim)) +
+    xlab (paste0('PCoA1 ', '(', round(pc.analysis$values[1,2], digits = 2), ')')) +
+    ylab (paste0('PCoA2 ', '(', round(pc.analysis$values[2,2], digits = 2), ')')) +
+    theme(axis.text.x=element_text(angle=90, size=30, vjust=0.5, hjust = 1),
+        axis.text.y=element_text(angle=45, size=30, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_text (size = 40),
+        axis.title.y = element_text(size = 40),
+        legend.title=element_text(size=30), 
+        legend.text=element_text(size=30),
+        strip.text.x = element_text(size = 30))
+
+#############################################
+#####PERMANOVA and Pairwise PERMONAOVA ######
+#############################################
+#temp.pa <- vegan::decostand(all.red.temp.t, method = 'total') # standardize the dataset
+#temp.pa <- temp.trans %>% rownames_to_column('sample') %>% arrange (sample) %>% column_to_rownames('sample') 
+
+comparison <- 'sample_type' #'location', 'ocean', 'population', "sample_type"
+
+ws.adonis <- ws.meta %>% 
+  #dplyr::filter(taxa != c("LaPazWS6", "LaPazWSB", "LaPazWSF")) %>%
+  dplyr::select (types, comparison) %>% 
+  dplyr::rename('names' = 1) %>% 
+  semi_join (., (temp.trans %>% rownames_to_column('sample')), by = c('names' = 'sample')) %>%
+  arrange(names)
+
+column <- ws.adonis %>%
+  pull (comparison)
+
+ws.perm.out <- vegan::adonis2 (temp.trans ~ column, data = ws.adonis, by = 'terms', method = 'bray') #margin or terms 
+print(ws.perm.out)
+
+AICc.PERMANOVA2(ws.perm.out)
+#PerMANOVA coefficients
+#perm.out <- as.data.frame(ws.perm.out$coefficients)
+#perm.out <- perm.out %>% 
+  #rownames_to_column ('sites') %>% 
+  #pivot_longer (-sites, names_to ='groups', values_to = 'coef') %>% 
+  #mutate (abs.val = abs(coef)) %>% 
+  #arrange (sites, desc(abs.val))
+
+# NOT WORKING #
+# bc.matrix <- vegdist (temp.pa, method = 'bray')
+# bc.matrix <- as.data.frame(as.matrix (bc.matrix))
+# 
+# bc.df <- data.frame( t(combn(names(bc.matrix),2)), dist=t(bc.matrix)[lower.tri(bc.matrix)] )
+# bc.df <- bc.df %>% 
+#   left_join (., (ws.meta %>% dplyr::select (types, location) %>% dplyr::rename ('X1' = types, 'loc.1' = location)), by = 'X1' ) %>%
+#   left_join (., (ws.meta %>% dplyr::select (types, location) %>% dplyr::rename ('X2' = types, 'loc.2' = location)), by = 'X2' ) %>%
+#   mutate (group.loc = ifelse (loc.1 == loc.2, loc.1,
+#                               ifelse (loc.1 == 'Cancun' & loc.2 == 'Tanzania', 'CT',
+#                                       ifelse (loc.1 == 'Cancun' &))))
+# #####################
+
+comparison <- 'location' #'location', 'ocean', 'population'
+ws.adonis <- ws.meta %>% 
+  dplyr::filter(taxa != c("LaPazWS6", "LaPazWSB", "LaPazWSF")) %>%
+  dplyr::select (types, comparison) %>% 
+  dplyr::rename('names' = 1) %>% 
+  semi_join (., (temp.trans %>% rownames_to_column('sample')), by = c('names' = 'sample')) %>%
+  arrange(names)
+
+ws.pairwise <- ws.adonis %>% rename ('var' = 2) %>% arrange(names) %>% mutate (var = factor(var)) #%>% pull (var)
+temp <- temp.trans %>% rownames_to_column('sample') %>% arrange(sample) %>%  column_to_rownames('sample')
+set.seed (13543)
+ws.perm.pair <- pairwise.adonis(temp, ws.pairwise$var, p.adjust.m = 'bonferroni') #BH, fdr, holm
+#ws.perm.pair1 <- pairwise.adonis2(temp[,1:445]~var, data = temp) #does not provide the adjusted R2 value
+print(ws.perm.pair)
+perm.out <- data.frame()
+ws.pairs <- as.data.frame(ws.perm.pair$pairs)
+ws.dist <- as.data.frame(ws.perm.pair$R2)
+ws.df <- cbind(ws.pairs, ws.dist)
+
+
+    
+#### #Beta-dispersion #####
+comparison <- 'location' #'location', 'ocean', 'population'
+
+ws.adonis <- ws.meta %>% 
+  dplyr::select (types, comparison) %>% 
+  dplyr::rename('names' = 1) %>% 
+  semi_join (., (temp.trans %>% rownames_to_column('sample')), by = c('names' = 'sample'))
+
+temp.dispersion <- betadisper(temp.dist, group = ws.adonis$location, type = 'median')
+boxplot(temp.dispersion)
+anova(temp.dispersion)
+TukeyHSD(temp.dispersion)
+
+set.seed (143)
+perm.disp <- permutest (temp.dispersion, model = 'reduced')
+print(perm.disp)
+
+
+dunn.test::dunn.test (stat, div.df2$population, method ='bh' )
+
+```
+
+####### Dendrogram #####
+```{r}
+####### Attempting to make dengrogram based on R2 from pairwise permanova results ######
+####### Not working ########
+
+distance.temp <- melt(as.matrix(temp.dist), varnames = c("row", "col"))
+
+if (types == 'taxa') { 
+ select.row <- colnames (ws.meta[1])
+} else if (types == 'function') {
+  select.row <- colnames(ws.meta[2])
+}
+
+distance.temp <- distance.temp %>% 
+  left_join (., (ws.meta %>% dplyr::select (select.row, location)), by = c('row' = select.row)) %>% 
+  left_join (., (ws.meta %>% dplyr::select (select.row, location)), by = c('col' = select.row)) %>% 
+  mutate (row.x = row, col.x = col) %>%
+  mutate (same = ifelse (row == col.x & col == row.x, 0, 1)) %>%
+  mutate (loc.group = ifelse (location.x == location.y, 'within', 'among')) %>%
+  filter (value > 0) %>%
+  unite (cat, c(location.x, location.y), sep = '_') %>%
+  dplyr::select (-c(row.x, col.x, same)) %>%
+  mutate (cat.group = ifelse (cat == 'Cancun_Cancun', cat,
+                              ifelse (cat == 'Cancun_Tanzania'| cat == 'Tanzania_Cancun', 'Cancun_Tanzania',
+                                      ifelse (cat == 'Cancun_Ningaloo'| cat == 'Ningaloo_Cancun', 'Cancun_Ningaloo',
+                                              ifelse (cat == 'Cancun_Philippines'|cat == 'Philippines_Cancun', 'Cancun_Philippines',
+                                                      ifelse (cat == 'Cancun_Lapaz'|cat == 'Lapaz_Cancun', 'Cancun_Lapaz',
+                                                              ifelse (cat == 'Tanzania_Tanzania', cat,
+                                                                      ifelse (cat == 'Tanzania_Ningaloo'|cat=='Ningaloo_Tanzania', 'Tanzania_Ningaloo',
+                                                                              ifelse (cat == 'Tanzania_Philippines'|cat == 'Philippines_Tanzania', 'Tanzania_Philippines',
+                                                                                      ifelse (cat == 'Tanzania_Lapaz'|cat == 'Lapaz_Tanzania', 'Tanzania_Lapaz',
+                                                                                              ifelse (cat == 'Ningaloo_Ningaloo', cat,
+                                                                                                      ifelse (cat == 'Ningaloo_Philippines'|cat == 'Philippines_Ningaloo', 'Ningaloo_Philippines',
+                                                                                                              ifelse (cat == 'Ningaloo_Lapaz'|cat == 'Lapaz_Ningaloo', 'Ningaloo_Lapaz',
+                                                                                                                      ifelse (cat == 'Philippines_Philippines', cat,
+                                                                                                                              ifelse (cat == 'Philippines_Lapaz'|cat == 'Lapaz_Philippines', 'Philippines_Lapaz', 'Lapaz_Lapaz'))))))))))))))) %>%
+  mutate (population.group = ifelse (cat.group == 'Cancun_Cancun', 'Atlantic',
+                                ifelse (cat.group == 'Cancun_Ningaloo'| cat.group == 'Cancun_Philippines' | cat.group == 'Cancun_Tanzania'| cat.group=='Cancun_Lapaz', 'among_ocean', 'Indo_Pacific'))) %>%
+  mutate (ocean.group = ifelse (cat.group == 'Cancun_Cancun', 'Atlantic',
+                                ifelse (cat.group == 'Cancun_Ningaloo'| cat.group == 'Cancun_Tanzania', 'Atlantic_Indian',
+                                        ifelse (cat.group == 'Tanzania_Tanzania'|cat.group == 'Ningaloo_Ningaloo'| cat.group == 'Tanzania_Ningaloo', 'Indian',
+                                                ifelse(cat.group == 'Cancun_Philippines'|cat.group =='Cancun_Lapaz', 'Atlantic_Pacific',
+                                                      ifelse (cat.group == 'Philippines_Philippines'|cat.group == 'Philippines_Lapaz'|cat.group == 'Lapaz_Lapaz', population.group, 'Pacific')))))) 
+
+distance.summary <- distance.temp %>% dplyr::select (cat, value) %>% group_by (cat) %>% summarise(mean(value), sd(value), sd(value)/sqrt(n()))
+
+write.csv (distance.summary, paste0 (file.dir, 'analysis/mikedoane.figures/level.2/function_dissimilarity_table.csv'))
+distance.dendro <- distance.summary %>% 
+  separate (cat, into = c('row', 'col')) %>%
+  dplyr::rename ('distance' = 3) %>%
+  pivot_wider (row, names_from = col, values_from = distance )
+distance.dendro <- as.matrix(distance.dendro)
+distance.dendro <-matrixcalc::lower.triangle(distance.dendro)
+  
+
+#cat.color <- distance.temp %>% pull(cat.color)
+ggplot (distance.temp, aes (cat.group, value, fill = loc.group)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c('#4477AA','#CC6688')) +
+  theme_mike_doane () +
+  theme(axis.text.x=element_text(angle=90, size=20, vjust=0.3, hjust = 0.9),
+        axis.title.x = element_text (size = 40),
+        axis.title.y = element_text(size = 40),
+        legend.title=element_text(size=30), 
+        legend.text=element_text(size=30),
+        strip.text.x = element_text(size = 30))
+dunn.df <- distance.temp %>% filter (loc.group == 'among')
+dunn.test::dunn.test (dunn.df$value, dunn.df$cat.group, method = 'bh')
+
+ggplot (distance.temp, aes (population.group, value, fill = population.group)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c('#4477AA','#CC6688','#CC6688')) +
+  theme_mike_doane() +
+  theme(axis.text.x=element_text(size=15, angle=90,hjust=0.95,vjust=0.2))
+dunn.df <- distance.temp
+dunn.test::dunn.test (dunn.df$value, dunn.df$population.group, method = 'bh')
+
+ggplot (distance.temp %>% mutate (ocean.group = factor(ocean.group, c('Atlantic', 'Atlantic_Indian', 'Indian', 'Indo_Pacific', 'Pacific', 'Atlantic_Pacific'))), aes (ocean.group, value, fill = ocean.group)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c('#CC6688', '#4477AA', '#CC6688', '#4477AA','#CC6688', '#4477AA')) +
+  theme_mike_doane() +
+  theme(axis.text.x=element_text(size=15, angle=90,hjust=0.95,vjust=0.2))
+
+dunn.df <- distance.temp %>% filter (loc.group == 'among')
+dunn.test::dunn.test (dunn.df$value, dunn.df$cat.group, method = 'bh')
+
+net.temp <- as.data.frame(distance.temp %>% 
+  filter (loc.group == 'among') %>% 
+  group_by (cat) %>% mutate (cat.mean = mean(value)) %>% 
+  distinct (cat, cat.mean) %>% separate(cat, c('loc.x', 'loc.y'))) %>%
+  mutate (similarity = 1- cat.mean)
+
+loc.x <- net.temp %>%
+  distinct(loc.x) %>%
+  rename(label = loc.x)
+
+loc.y <- net.temp %>%
+  distinct(loc.y) %>%
+  rename(label = loc.y)
+
+column_order <- c(5,3,4,2,1)
+nodes <- full_join(loc.x, loc.y, by = "label") 
+nodes$order <- column_order
+nodes <- nodes %>% arrange (order) %>%
+  rowid_to_column('id') %>%
+  dplyr::select (-order)
+if (types == 'taxa') { 
+sig.edges <- c('sig','sig','sig','sig','nonsig','sig','sig','nonsig','nonsig','nonsig')
+rsq <- c(0.19141665,0.1972383,0.08951695,0.15479432,0.0535531,0.10157468,0.20079446,0.08537839,0.12252629,0.08441452)
+} else if (types == 'function') {
+sig.edges <- c('sig','sig','sig','sig','sig','sig','sig','sig','sig','sig')
+rsq <- c(0.2709956,0.5180912,0.1955759,0.5021151,0.2595266,0.229736,0.3581991,0.4686988,0.461317,0.4620699)
+}
+edges <- net.temp %>% 
+  left_join(nodes, by = c("loc.x" = "label")) %>% 
+  rename(from = id) %>%
+  left_join (nodes, by = c('loc.y' = 'label')) %>%
+  rename(to = id) %>%
+  dplyr::select (from, to, similarity) %>%
+  distinct (similarity, .keep_all = TRUE)
+edges$sig.edges <- sig.edges
+edges$rsq <- rsq
+edges.igraph <- igraph::graph_from_data_frame (d = edges, vertices = nodes, directed = FALSE)
+
+if (types == 'taxa') {
+  label.type = 'Taxonomic Similarity'
+} else if (types == 'function') {
+  label.type = 'Functional Similarity'
+}
+c <- factor(sig.edges)
+b <- rsq
+ggraph::ggraph(edges.igraph, layout = "linear") + 
+  geom_edge_arc(aes(width = similarity, colour = c), alpha = 0.8) + 
+  scale_edge_width(range = c(0.2, 6)) +
+  geom_node_text(aes(label = label)) +
+  labs(edge_width = label.type, edge_colour = 'Rsq') +
+  theme_graph()
+
+g.net <- igraph::graph.data.frame(net.temp, directed=FALSE)
+g <- igraph::get.adjacency(g.net, attr="cat.mean", sparse = FALSE)
+g <- as.matrix(net.temp, "adjacency")
+net = network(bip, 
+              matrix.type = "bipartite",
+              ignore.eval = FALSE,
+              names.eval = "weights")
+ggnet2(net, edge.size = 'weights')
+
+graph.mat <- distance.temp %>% dplyr::select (row, col, value)
+g.mat <- igraph::graph.data.frame(graph.mat, directed=FALSE)
+g <- as.matrix(g, "adjacency")
+# add value as a weight attribute
+g <- igraph::get.adjacency(g.mat, attr="value", sparse=FALSE)
+net <- network(g, directed = FALSE)
+ggnet2(net)
+
+ws.df <- harrietr::melt_dist(as.matrix(temp.dist))
+ws.df <- ws.df %>% left_join(., (ws.meta %>% dplyr::select (types, location) %>% dplyr::rename('iso' = 1)), by = c('iso1'='iso', 'iso2'='iso')) %>% left_join(., (ws.meta %>% dplyr::select (types, location) %>% dplyr::rename('iso' = 1)), by = c('iso2'='iso', 'iso2'='iso')) %>% filter (location.x != location.y) %>%  
+  unite(loc, c('location.x', 'location.y')) 
+
+ws.df$loc.id <- ifelse(ws.df$loc == 'Lapaz_Cancun'| ws.df$loc == 'Cancun_Lapaz', 'Lapaz_Cancun', 
+                       ifelse (ws.df$loc == 'Ningaloo_Cancun'|ws.df$loc == 'Cancun_Ningaloo', 'Ningaloo_Cancun', 
+                               ifelse(ws.df$loc == 'Philippines_Cancun'|ws.df$loc=='Cancun_Phillipines', 'Philippines_Cancun', ifelse(ws.df$loc == 'Tanzania_Cancun'|ws.df$loc=='Cancun_Tanzania', 'Tanzania_Cancun', 
+                                                                                                                                ifelse(ws.df$loc == 'Ningaloo_Lapaz'|ws.df$loc=='Lapaz_Ningaloo', 'Ningaloo_Lapaz', 
+                                                                                                                                             ifelse (ws.df$loc == 'Philippines_Lapaz'|ws.df$loc=='Lapaz_Philippines', 'Philippines_Lapaz', 
+                                                                                                                                                     ifelse (ws.df$loc == 'Tanzania_Lapaz'|ws.df$loc=='Lapaz_Tanzania', 'Tanzania_Lapaz', 
+                                                                                                                                                             ifelse (ws.df$loc == 'Tanzania_Philippines'|ws.df$loc =='Philippines_Tanzania', 'Tanzania_Philippines', 
+                                                                                                                                                                     ifelse(ws.df$loc == 'Philippines_Ningaloo'|ws.df$loc=='Ningaloo_Philippines', 'Philippines_Ningaloo', 'Tanzania_Ningaloo')))))))))
+
+temp.ws.df <- ws.df %>% 
+  group_by (loc.id) %>% 
+  mutate (mean.bray = median(dist)) %>% 
+  distinct (loc.id, .keep_all = T) %>%
+  separate(loc.id, into = c('loc.x', 'loc.y')) %>% 
+  dplyr::select (-c(iso1, iso2, dist, loc)) %>%
+  arrange(loc.x) %>%
+  pivot_wider (names_from = loc.y, values_from = mean.bray) %>% 
+  column_to_rownames ('loc.x')
+
+w <- matrix(0, nrow=5, ncol=5)
+w[lower.tri(w)] <- temp.ws.df[lower.tri(temp.ws.df, diag = T)]
+rownames(w) <- c('Cancun', 'Lapaz', 'Ningaloo', 'Philippines', 'Tanzania')
+colnames(w) <- c('Cancun','Lapaz', 'Ningaloo', 'Philippines', 'Tanzania')
+wd <- as.dist(w)
+#plot(hclust(as.dist(w, upper = T, diag = T)), method = 'single')
+plot (hclust(wd, method = 'complete'))
+
+out <- ape::nj(wd) 
+plot(out, 'cladogram')
+
+```
+
+####### SIMPER Analysis #######
+```{r}
+simp.out <- simper (temp.trans, group = ws.adonis$location, permutations = 1000)
+list.names <- names(summary(simp.out))
+
+
+#i <-1
+simp.dataset <- list()
+for (i in 1:length(list.names)) { 
+  temp.simp <- as.data.frame(summary(simp.out)[list.names[i]])
+  temp.simp <- temp.simp %>% 
+    rename ('average' = 1, 'sd' = 2, 'ratio' = 3, 'ava'= 4, 'avb'= 5, 'cumsum' = 6, 'p' = 7) %>% 
+    rownames_to_column ('groups') %>% mutate (group = list.names[i])
+  simp.dataset[[paste0(list.names[i])]] <- temp.simp
+}
+
+simp.full <- do.call (rbind, simp.dataset)
+simp.full <- simp.full %>% rownames_to_column ('site') %>% dplyr::select (-site)
+simp.reduced <- simp.full %>% group_by (groups) %>% filter (cumsum <= 0.5)
+
+if (types == 'taxa') { 
+write.csv (simp.full, paste0 (file.dir, 'analysis/mikedoane.figures/taxa/', types, '.simper.out.csv'))
+write.csv (simp.reduced, paste0 (file.dir,'analysis/mikedoane.figures/taxa/', types, '.simper.reduced.out.csv'))
+} else if (types == 'function') { 
+write.csv (simp.full, paste0 (file.dir, 'analysis/mikedoane.figures/level.2/', types, '.simper.out.csv'))
+write.csv (simp.reduced, paste0 (file.dir,'analysis/mikedoane.figures/level.2/', types, '.simper.reduced.out.csv'))
+}
+
+```
+
+
+########## Alpha Diversity #######
+```{r}
+### calculate diversity scores
+### Figure 2 b,d ###
+comparison <- c('location', 'ocean', 'population') #'location', 'ocean', 'population'
+
+ws.adonis <- ws.meta %>% 
+  dplyr::select (types, comparison) %>% 
+  dplyr::rename('names' = 1) %>% 
+  semi_join (., (temp.trans %>% rownames_to_column('sample')), by = c('names' = 'sample'))
+
+
+div <- as.data.frame(temp.trans)
+div.df <- vegan::diversity(div, index = 'shannon')
+div.df <- as.data.frame(div.df)
+div.df <- div.df %>% dplyr::rename ('H' = 1)
+div.df$eff.div <- exp(div.df[,1])
+div.df$richness <- specnumber(div, MARGIN=1)
+div.df$p.even <- div.df$H/log(div.df$richness)
+temp.dispersion <- betadisper(temp.dist, group = ws.adonis$location, type = 'centroid')
+#chao.df <- specpool (div, ws.meta$location)
+div.df <- div.df %>% 
+  rownames_to_column(sample.name) %>% 
+  left_join (., (ws.meta %>% dplyr::select (sample.name, location)), by = sample.name) 
+
+groups <- ws.meta %>% 
+  dplyr::select (types, location) %>% 
+  dplyr::rename('sample' = 1) %>% 
+  semi_join (., (temp.trans %>% rownames_to_column('sample')), by = 'sample') %>%
+  mutate_at (vars(2), as.factor)
+#groups <- as.factor(groups[,2])
+groups <- groups %>% mutate (location = factor(location)) %>% arrange (sample)
+
+temp.disp <- data.frame(as.matrix(temp.dispersion$distances))
+div.df <- div.df %>% dplyr::rename('sample' = 1) %>% 
+  left_join (., (temp.disp %>% rownames_to_column('sample') %>% dplyr::rename('disp' = 2)), by = 'sample')
+
+comparison <- 'location'
+t = 7
+
+##########starts here
+plot.div <- function (t,comparison) { 
+  ws.adonis <- ws.meta %>% 
+  dplyr::select (types, comparison) %>% 
+  dplyr::rename('names' = 1)  
+  #semi_join (., (temp %>% rownames_to_column('sample')), by = c('names' = 'sample'))
+
+div <- as.data.frame(temp.trans)
+div.df <- vegan::diversity(div, index = 'shannon')
+div.df <- as.data.frame(div.df)
+div.df <- div.df %>% dplyr::rename ('H' = 1)
+div.df$eff.div <- exp(div.df[,1])
+div.df$richness <- specnumber(div, MARGIN=1)
+div.df$p.even <- div.df$H/log(div.df$richness)
+
+
+if (comparison == 'location') { 
+temp.dispersion <- betadisper(temp.dist, group = ws.adonis$location, type = 'centroid')
+} else if (comparison == 'ocean') {
+  temp.dispersion <- betadisper(temp.dist, group = ws.adonis$ocean, type = 'centroid')
+} else if (comparison == 'population') {
+  temp.dispersion <- betadisper(temp.dist, group = ws.adonis$population, type = 'centroid')
+}
+#chao.df <- specpool (div, ws.meta$location)
+div.df <- div.df %>% 
+  rownames_to_column(sample.name) %>% 
+  left_join (., (ws.meta %>% dplyr::select (sample.name, comparison)), by = sample.name) 
+
+groups <- ws.meta %>% 
+  dplyr::select (types, comparison) %>% 
+  dplyr::rename('sample' = 1) %>% 
+  semi_join (., (temp.trans %>% rownames_to_column('sample')), by = 'sample') %>%
+  mutate_at (vars(2), as.factor)
+#groups[2] <- as.factor(groups)
+groups <- groups %>% arrange (sample)
+
+temp.disp <- data.frame(as.matrix(temp.dispersion$distances))
+div.df <- div.df %>% dplyr::rename('sample' = 1) %>% 
+  left_join (., (temp.disp %>% 
+                   rownames_to_column('sample') %>% 
+                   dplyr::rename('disp' = 2)), by = 'sample')
+
+stat.name <- names(div.df[t])
+h <- sym(stat.name)
+stat <- dplyr::pull(div.df, t)
+  
+print(div.df.summary <- div.df %>% 
+    dplyr::select(c(comparison, t), -sample) %>% 
+    pivot_longer (cols = -comparison, names_to = 'div', values_to = 'score') %>% 
+    group_by (!!! rlang::syms(comparison)) %>%
+    summarise(mean.score = mean(score), sd.score = sd(score), se.score = sd(score)/sqrt(n()))) 
+    
+ if (types == 'taxa' & t == 2) {
+  y_lab = expression(Shannon~Diversity~(H))
+} else if (types == 'taxa' & t == 3) { 
+  y_lab = expression(e^{H}) #Effective~Number~of~Families~
+} else if (types == 'taxa' & t == 4) {
+  y_lab = 'Family Richness' 
+} else if (types == 'taxa' & t == 5) {
+  y_lab = 'Pielou evenness' 
+} else if (types == 'taxa' & t == 7){ 
+  y_lab = 'Dispersion from centroid' 
+} else if (types == 'function' & t == 2){ 
+  y_lab = expression(Shannon~Diversity~(H))
+} else if (types == 'function' & t == 3){
+  y_lab = expression(e^{H}) #Effective~Number~of~L2~Subsystems~
+} else if (types == 'function' & t == 4) {
+  y_lab = 'L2 Subsystem Richness'
+} else if (types == 'function' & t == 5) {
+  y_lab = 'Pielou evenness'
+} else if (types == 'function' & t == 7) {
+  y_lab = 'Dispersion from centroid'
+}
+
+  
+div.df1 <- div.df
+  if (comparison == 'location')  {
+  div.df2 <- div.df1 %>% mutate (!! comparison := factor (!! rlang::sym(comparison), c('Cancun', 'Tanzania', 'Ningaloo', 'Philippines', 'Lapaz')))
+  color.group <- group.colors
+  color.group <- color.group %>% dplyr::rename ('group' = 1, 'color'= 2)
+} else if (comparison == 'ocean') {
+  div.df2 <- div.df1 %>% mutate (!! comparison := factor(!! rlang::sym(comparison), c('Atlantic', 'Indian', 'Pacific')))
+  color.group <- ocean.colors
+  color.group <- color.group %>% dplyr::rename ('group' = 1, 'color'= 2)
+} else if (comparison == 'population') {
+  div.df2 <- div.df1 %>% mutate (!! comparison := factor(!! rlang::sym(comparison), c('Atlantic', 'Indo_Pacific')))
+  color.group <- population.colors
+  color.group <- color.group %>% dplyr::rename ('group' = 1, 'color'= 2)
+}
+  
+  plot(ggplot (div.df2 %>% mutate (!!comparison := recode (!! rlang::sym(comparison), Lapaz = 'La Paz')), aes (!! rlang::sym(comparison), !! rlang::sym(h), fill = !! rlang::sym(comparison))) +
+  geom_boxplot() +
+  geom_jitter () +
+  scale_fill_manual(name = color.group$group, values = color.group$color) +
+  labs (x = '', y = y_lab) +
+  #theme_mike_doane() +
+  theme(axis.text.x=element_text(angle=90, size=30, hjust=1,vjust=0.5),
+        axis.text.y=element_text(angle=45, size=30, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_text (size = 30),
+        axis.title.y = element_text(size = 30),
+        axis.ticks = element_blank (),
+        legend.position='none', 
+        strip.text.x = element_text(size = 30),
+        line = element_blank(),
+        rect = element_blank(),
+        axis.line.x = element_line(color="black", size = 1),
+        axis.line.y = element_line(color="black", size = 1))
+  )
+  
+  plot(ggplot (div.df2 %>% mutate (!!comparison := recode (!! rlang::sym(comparison), Lapaz = 'La Paz')), aes (!! rlang::sym(comparison), !! rlang::sym(h), fill = !! rlang::sym(comparison))) +
+  geom_violin() +
+  geom_boxplot(width=0.1)+
+  geom_jitter () +
+  scale_fill_manual(name = color.group$group, values = color.group$color) +
+  labs (x = '', y = y_lab) +
+  #theme_mike_doane() +
+  theme(axis.text.x=element_text(angle=90, size=30, hjust=1,vjust=0.5),
+        axis.text.y=element_text(angle=45, size=30, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_text (size = 30),
+        axis.title.y = element_text(size = 30),
+        axis.ticks = element_blank (),
+        legend.position='none', 
+        strip.text.x = element_text(size = 30),
+        line = element_blank(),
+        rect = element_blank(),
+        axis.line.x = element_line(color="black", size = 1),
+        axis.line.y = element_line(color="black", size = 1))
+)
+
+bars <<- ggplot (div.df2 %>% mutate (!!comparison := recode (!! rlang::sym(comparison), Lapaz = 'La Paz')), aes (!! rlang::sym(comparison), !! rlang::sym(h), fill = !! rlang::sym(comparison))) +
+  geom_boxplot() +
+  geom_jitter () +
+  scale_fill_manual(name = color.group$group, values = color.group$color) +
+  labs (x = '', y = y_lab) +
+  #theme_mike_doane() +
+  theme(axis.text.x=element_text(angle=90, size=30, hjust=1,vjust=0.5),
+        axis.text.y=element_text(angle=45, size=30, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_text (size = 30),
+        axis.title.y = element_text(size = 30),
+        axis.ticks = element_blank (),
+        legend.position='none', 
+        strip.text.x = element_text(size = 30),
+        line = element_blank(),
+        rect = element_blank(),
+        axis.line.x = element_line(color="black", size = 1),
+        axis.line.y = element_line(color="black", size = 1))
+
+
+  if (comparison == 'location') { 
+  dunn.test::dunn.test (stat, div.df2$location, method ='bh' )
+} else if (comparison == 'ocean') {
+  dunn.test::dunn.test (stat, div.df2$ocean, method ='bh' )
+} else if (comparison == 'population') {
+  dunn.test::dunn.test (stat, div.df2$population, method ='bh' ) 
+}
+  
+}
+
+names(div.df)
+# "sample"   "H" "eff.div"  "richness" "p.even"   "location" "disp" 
+plot.div(3, 'location') #2-H, 3-Eff div, 4-richness, 5-evenness, 7-dispersal
+
+
+
+```
+
+All sample stacked barchart
+Supplemental Barchart
+```{r}
+rank.cat.abund <- all.red.temp %>% 
+  rownames_to_column('cat') %>%
+  pivot_longer (-cat, names_to = 'sample', values_to = 'abund') %>%
+  filter (abund > 0) %>% 
+  filter(!is.na(abund)) %>% 
+  left_join (., (ws.meta %>% dplyr::select (types, location) %>% dplyr::rename ('sample' = 1)), by = 'sample') %>%
+  group_by (sample) %>%
+  mutate (sample.total = sum(abund)) %>% #calculate sample total
+  group_by (sample, cat) %>%
+  mutate (cat.abund = sum(abund), cat.prop = cat.abund/sample.total) %>% # calculate category total and category prop for each sample
+  distinct(sample, cat, .keep_all = TRUE) %>%
+  ungroup () %>%
+  group_by (cat) %>%
+  mutate (cat.n = n(), cat.sum = sum(cat.prop), cat.mean = cat.sum/74) %>%
+  #mutate (cat.mean = mean(cat.prop)) %>%
+  dplyr::select (cat, cat.mean) %>%
+  distinct(cat, .keep_all = T) %>%
+  ungroup () %>%
+  arrange(desc(cat.mean)) %>%
+  mutate (rank = dense_rank(-cat.mean))
+
+rank.list <- rank.cat.abund$cat
+  
+abund.df <- all.red.temp %>% 
+  rownames_to_column('cat') %>%
+  pivot_longer (-cat, names_to = 'sample', values_to = 'abund') %>%
+  filter (abund > 0) %>% 
+  filter(!is.na(abund)) %>% 
+  left_join (., (ws.meta %>% dplyr::select (types, location) %>% dplyr::rename ('sample' = 1)), by = 'sample') %>%
+  group_by (sample) %>%
+  mutate (sample.total = sum(abund)) %>% #calculate sample total
+  group_by (sample, cat) %>%
+  mutate (cat.abund = sum(abund), cat.prop = cat.abund/sample.total) %>% # calculate category total and category prop for each sample
+  left_join (., (rank.cat.abund %>% dplyr::select(-cat.mean)), by = 'cat') %>%
+  ungroup ()
+
+as.data.frame(abund.df %>% group_by(sample) %>% summarise (sum(cat.prop)))
+
+n <- 20
+
+######## skip this section #######
+abund.summary <- abund.df %>% 
+  filter (rank <=n) %>% 
+  group_by (sample) %>% 
+  mutate(sample.sum = sum(cat.prop)) %>% 
+  distinct(sample, .keep_all = TRUE) %>% 
+  dplyr::select (sample, location,sample.sum) %>% 
+  ungroup() %>% 
+  group_by(location) %>% 
+  summarise (mean = mean(sample.sum), sd = sd(sample.sum), se = sd/sqrt(n()))
+abund.summary
+##################################
+
+rank.cut <- rank.list[1:n]
+abund.use.df <- abund.df %>% 
+  filter (rank <= n)  %>% 
+  mutate (cat = factor(cat,  rank.cut)) %>%
+  mutate (cat = stringr::str_replace (cat, "^f:", '')) %>% 
+  mutate (cat = factor(cat)) %>%
+  dplyr::select (sample,cat,cat.prop, rank) %>%
+  arrange (sample, rank) %>%
+  group_by (sample) %>%
+  mutate (cat = factor(cat, levels = unique(cat))) %>%
+  ungroup ()
+
+
+
+if (types == 'taxa') {
+  abund.use.df <- abund.use.df %>% left_join (., (seq.meta %>% dplyr::select (tax.label, paper.names, sample.type)), by = c('sample'= 'tax.label')) 
+} else if (types == 'function') {
+  abund.use.df <- abund.use.df %>% left_join (., (seq.meta %>% dplyr::select (func.label, paper.names)), by = c('sample'= 'func.label'))
+}
+
+if (types == 'taxa') {
+  legend.label <- 'Families'  
+} else if (types == 'function') {
+  legend.label <- 'Level 2 Functions'
+}
+
+set.seed (23)
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+col=sample(col_vector, n)
+p <- ggplot (abund.use.df, aes (sample.type, cat.prop, fill = cat)) +
+  geom_bar (stat = 'identity') +
+  geom_col(position = position_stack(reverse = TRUE)) +
+  scale_y_continuous(expand = c(0,0))+
+  labs (x = '', y = 'Relative Proportion')+
+  scale_fill_manual(legend.label, values = c(col), guide = guide_legend(reverse = TRUE)) +
+  #theme_mike_doane ()
+  theme(axis.text.x=element_text(angle=90, size=12, hjust=1,vjust=0.5),
+        axis.text.y=element_text(angle=45, size=30, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_text (size = 40),
+        axis.title.y = element_text(size = 40),
+        legend.title=element_text(size=30), 
+        legend.text=element_text(size=25),
+        strip.text.x = element_text(size = 30),
+        #line = element_blank(),
+        rect = element_blank(),
+        axis.line.x = element_line(color="black", size = 2),
+        axis.line.y = element_line(color="black", size = 2))
+
+ggplot (abund.use.df, aes (sample.type, cat.prop, fill = cat)) +
+  geom_bar (stat = 'identity') +
+  geom_col(position = position_stack(reverse = TRUE)) +
+  scale_y_continuous(expand = c(0,0))+
+  labs (x = '', y = 'Relative Proportion')+
+  scale_fill_manual(legend.label, values = c(col), guide = guide_legend(reverse = TRUE)) +
+  #theme_mike_doane ()
+  theme(axis.text.x=element_text(angle=90, size=12, hjust=1,vjust=0.5),
+        axis.text.y=element_text(angle=45, size=30, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_text (size = 40),
+        axis.title.y = element_text(size = 40),
+        legend.position = 'none',
+        strip.text.x = element_text(size = 30),
+        #line = element_blank(),
+        rect = element_blank(),
+        axis.line.x = element_line(color="black", size = 2),
+        axis.line.y = element_line(color="black", size = 2))
+
+
+# Extract the legend. Returns a gtable
+leg <- ggpubr::get_legend(p)
+# Convert to a ggplot and print
+ggpubr::as_ggplot(leg)
+
+```
+
+DESEQ -- Differential abundance analysis
+```{r}
+#datasets to use: all.out and df.meta
+
+all.out.mat <- as.data.frame(all.out)
+if (types == 'function') {
+  all.out.mat <- all.out.mat %>% mutate_if (is.numeric, round)
+}
+
+deseq.meta <- df.meta %>% rownames_to_column ('remove') %>% dplyr::select (-remove)
+
+
+######### Run all pairwise comparisons through DESeq2 ##########
+######### If wanting to run DESeq2 over entire dataset, skip to code chunk below ############
+
+if (types == 'taxa') { 
+group.list <- list ('cancun', 'lapaz', 'ningaloo', 'philippines', 'tanzania')
+} else if (types == 'function') { 
+group.list <- list ('Cancun', 'Lapaz', 'Ningaloo', 'Philippines', 'Tanzania') 
+}
+all.combination <- apply(combn(group.list,2),2,paste,collapse='_')
+
+res.list <- list()
+dseqObjs <- list()
+results.output <- list()
+f = 10
+
+for (f in 1:length(all.combination)) { 
+  to_compare <- as.data.frame(all.combination[f])
+  to_compare <- to_compare %>% separate (1, c('location1', 'location2'), sep = '_')
+  location1 <- to_compare[1,1]
+  location2 <- to_compare[1,2]
+  filter_on <- c(location1, location2)
+  
+all.temp <- as.data.frame(all.out.mat)
+all.temp <- all.temp %>% column_to_rownames(group)
+all.temp <- as.data.frame(t(all.temp))
+all.temp <- all.temp %>% 
+  rownames_to_column('sample') %>% 
+  left_join (df.meta, by ='sample') %>%
+  mutate (sample.site = factor(sample.site)) %>%
+  filter (sample.site %in% filter_on) %>%
+  dplyr::select (-sample.site) %>%
+  column_to_rownames('sample')
+
+all.temp <- as.data.frame(t(all.temp))
+#all.temp <- all.temp %>%
+  #rownames_to_column (group)
+
+temp.meta <- deseq.meta 
+temp.meta <- temp.meta %>% 
+  filter (sample.site %in% filter_on)
+  
+################### Make Deseq Object
+dds <- DESeqDataSetFromMatrix (countData = all.temp,
+                               colData = temp.meta,
+                               design = ~sample.site)
+### Run Deseq
+print(f)
+dds.out <- DESeq(dds)
+dseqObjs[[f]] <- dds.out 
+
+### view results
+res.temp <- results(dds.out)
+res.temp <- res.temp[order(res.temp$padj),]
+res.list[[f]] <- res.temp
+
+lnames <- res.temp@rownames
+lcolnames <- c('baseMean', 'log2FoldChange', 'lfcSE', 'stat', 'pvalue', 'padj')
+l1<- res.temp@listData$baseMean
+l2 <- res.temp@listData$log2FoldChange
+l3 <- res.temp@listData$lfcSE
+l4 <- res.temp@listData$stat
+l5 <- res.temp@listData$pvalue
+l6 <- res.temp@listData$padj
+
+output.df <- cbind (l1, l2, l3, l4, l5, l6)
+rownames(output.df) <- lnames
+colnames(output.df) <- lcolnames
+output.df <- as.data.frame(output.df)
+
+results.output[[f]] <- output.df
+rm(output.df)
+}
+
+summary(res)
+res <- res[order(res$padj),]
+
+
+#### Plot Counts ###
+par (mfrow=c(1,1))
+plotCounts (dseqObjs[[2]], gene = 'Cell wall general', intgroup = 'sample.site')
+
+##### Volcano Plot ####
+#reset par
+par(mfrow=c(1,1))
+# Make a basic volcano plot
+with(res, plot(log2FoldChange, -log10(pvalue), pch=20, main="Volcano plot", xlim=c(-3,3)))
+
+# Add colored points: blue if padj<0.01, red if log2FC>1 and padj<0.05)
+with(subset(res, padj<.01 ), points(log2FoldChange, -log10(pvalue), pch=20, col="blue"))
+with(subset(res, padj<.01 & abs(log2FoldChange)>2), points(log2FoldChange, -log10(pvalue), pch=20, col="red"))
+
+###### PCA on normalized counts ######
+vsdata <- vst(dds.out, blind=FALSE, nsub =200)
+plotPCA(vsdata, intgroup="sample.site")
+
+##########################################################
+############## Start DESeq2 on entire dataset ############
+##########################################################
+
+### Make Deseq Object
+dds <- DESeqDataSetFromMatrix (countData = all.out.mat,
+                               colData = deseq.meta,
+                               design = ~sample.site, tidy = TRUE)
+
+### Run Deseq
+dds.out <- DESeq(dds)
+
+### view results
+res.temp <- results(dds.out)
+res.temp <- res.temp[order(res.temp$padj),]
+
+####code below creates your own dataframe that you can manipulate 
+lnames <- res.temp@rownames
+lcolnames <- c('baseMean', 'log2FoldChange', 'lfcSE', 'stat', 'pvalue', 'padj')
+l1<- res.temp@listData$baseMean
+l2 <- res.temp@listData$log2FoldChange
+l3 <- res.temp@listData$lfcSE
+l4 <- res.temp@listData$stat
+l5 <- res.temp@listData$pvalue
+l6 <- res.temp@listData$padj
+
+results.df <- cbind (l1, l2, l3, l4, l5, l6)
+rownames(results.df) <- lnames
+colnames(results.df) <- lcolnames
+results.df <- as.data.frame(results.df)
+#######
+
+deseq2Data <- dds.out
+deseq2results <- results(deseq2Data)
+deseq2ResDF <- as.data.frame(deseq2results)
+
+# Convert the DESeq transformed object to a data frame
+deseq2VST <- vst(deseq2Data, nsub=50)
+deseq2VST <- varianceStabilizingTransformation(dds)
+deseq2VST <- assay(deseq2VST)
+deseq2VST <- as.data.frame(deseq2VST)
+deseq2VST$Gene <- rownames(deseq2VST)
+head(deseq2VST)
+
+# Keep only the significantly differentiated genes where the fold-change was at least 3
+sigGenes <- rownames(deseq2ResDF[deseq2ResDF$padj <= .05 & abs(deseq2ResDF$log2FoldChange) > 1,])
+deseq2VST <- deseq2VST[deseq2VST$Gene %in% sigGenes,]
+
+# Convert the VST counts to long format for ggplot2
+# First compare wide vs long version
+deseq2VST_wide <- deseq2VST
+deseq2VST_long <- melt(deseq2VST, id.vars=c("Gene"))
+
+head(deseq2VST_wide)
+head(deseq2VST_long)
+
+# Now overwrite our original data frame with the long format
+deseq2VST <- melt(deseq2VST, id.vars=c("Gene"))
+
+# Make a heatmap
+library(viridis)
+heatmap <- ggplot(deseq2VST, aes(x=variable, y=Gene, fill=value)) + 
+  geom_raster() + 
+  scale_fill_viridis(trans="sqrt") + 
+  theme(axis.text.x=element_text(angle=65, hjust=1)) 
+        #axis.text.y=element_blank(), 
+        #axis.ticks.y=element_blank())
+plot(heatmap)
+
+
+####### Clustering data #####
+deseq2VSTMatrix <- dcast(deseq2VST, Gene ~ variable)
+rownames(deseq2VSTMatrix) <- deseq2VSTMatrix$Gene
+deseq2VSTMatrix$Gene <- NULL
+
+# Compute a distance calculation on both dimensions of the matrix
+distanceGene <- dist(deseq2VSTMatrix)
+distanceSample <- dist(t(deseq2VSTMatrix))
+
+# Cluster based on the distance calculations
+clusterGene <- hclust(distanceGene, method="average")
+clusterSample <- hclust(distanceSample, method="average")
+
+# Construct a dendogram for samples
+#install.packages("ggdendro")
+library(ggdendro)
+sampleModel <- as.dendrogram(clusterSample)
+sampleDendrogramData <- segment(dendro_data(sampleModel, type = "rectangle"))
+sampleDendrogram <- ggplot(sampleDendrogramData) + 
+  geom_segment(aes(x = x, y = y, xend = xend, yend = yend)) + 
+  theme_dendro()
+
+# Re-factor samples for ggplot2
+deseq2VST$variable <- factor(deseq2VST$variable, levels=clusterSample$labels[clusterSample$order])
+
+# Construct the heatmap. note that at this point we have only clustered the samples NOT the genes
+heatmap <- ggplot(deseq2VST, aes(x=variable, y=Gene, fill=value)) + 
+  geom_raster() + 
+  scale_fill_viridis(trans="sqrt") + 
+  theme(axis.text.x=element_text(angle=65, hjust=1), 
+        axis.text.y=element_blank(), 
+        axis.ticks.y=element_blank())
+heatmap
+
+# Combine the dendrogram and the heatmap
+#install.packages("gtable")
+#install.packages("gridExtra")
+library(gridExtra)
+library(gtable)
+library(grid)
+grid.arrange(sampleDendrogram, heatmap, ncol=1, heights=c(1,5))
+
+# Modify the ggplot objects
+sampleDendrogram_1 <- sampleDendrogram + 
+  scale_x_continuous(expand=c(.0085, .0085)) + 
+  scale_y_continuous(expand=c(0, 0))
+
+heatmap_1 <- heatmap + 
+  scale_x_discrete(expand=c(0, 0)) + 
+  scale_y_discrete(expand=c(0, 0))
+
+# Convert both grid based objects to grobs
+sampleDendrogramGrob <- ggplotGrob(sampleDendrogram_1)
+heatmapGrob <- ggplotGrob(heatmap_1)
+
+# Check the widths of each grob
+sampleDendrogramGrob$widths
+heatmapGrob$widths
+
+# Add in the missing columns
+sampleDendrogramGrob <- gtable_add_cols(sampleDendrogramGrob, heatmapGrob$widths[7], 6)
+sampleDendrogramGrob <- gtable_add_cols(sampleDendrogramGrob, heatmapGrob$widths[8], 7)
+
+# Make sure every width between the two grobs is the same
+maxWidth <- unit.pmax(sampleDendrogramGrob$widths, heatmapGrob$widths)
+sampleDendrogramGrob$widths <- as.list(maxWidth)
+heatmapGrob$widths <- as.list(maxWidth)
+
+# Arrange the grobs into a plot
+finalGrob <- arrangeGrob(sampleDendrogramGrob, heatmapGrob, ncol=1, heights=c(2,5))
+
+# Draw the plot
+grid.draw(finalGrob)
+
+#####Re-order the sample data to match the clustering we did
+sampleData_v2 <- deseq.meta
+sampleData_v2 <- sampleData_v2 %>% dplyr::rename (Run = sample)
+sampleData_v2$Run <- factor(sampleData_v2$Run, levels=clusterSample$labels[clusterSample$order])
+
+# Construct a plot to show the clinical data
+colours <- c("#CC6677", "#AA4499", "#DDCC77","#009988", "#4477AA")
+sampleClinical <- ggplot(sampleData_v2, aes(x=Run, y=1, fill=sample.site)) + 
+  geom_tile() + 
+  scale_x_discrete(expand=c(0, 0)) + 
+  scale_y_discrete(expand=c(0, 0)) + 
+  scale_fill_manual(name="Sites", values=colours) + 
+  theme_void()
+
+# Convert the clinical plot to a grob
+sampleClinicalGrob <- ggplotGrob(sampleClinical)
+
+# Make sure every width between all grobs is the same
+maxWidth <- unit.pmax(sampleDendrogramGrob$widths, heatmapGrob$widths, sampleClinicalGrob$widths)
+sampleDendrogramGrob$widths <- as.list(maxWidth)
+heatmapGrob$widths <- as.list(maxWidth)
+sampleClinicalGrob$widths <- as.list(maxWidth)
+
+# Arrange and output the final plot
+finalGrob <- arrangeGrob(sampleDendrogramGrob, sampleClinicalGrob, heatmapGrob, ncol=1, heights=c(2,1,5))
+grid.draw(finalGrob)
+```
+
+Look for specific gene function groups in data to compare across locations
+```{r}
+##### create a list of the ranked categories by abundance in descending order #####
+rank.cat.abund <- all.red.temp %>% 
+  rownames_to_column('cat') %>%
+  pivot_longer (-cat, names_to = 'sample', values_to = 'abund') %>%
+  filter (abund > 0) %>% 
+  filter(!is.na(abund)) %>% 
+  left_join (., (ws.meta %>% dplyr::select (types, location) %>% dplyr::rename ('sample' = 1)), by = 'sample') %>%
+  group_by (sample) %>%
+  mutate (sample.total = sum(abund)) %>% #calculate sample total
+  group_by (sample, cat) %>%
+  mutate (cat.abund = sum(abund), cat.prop = cat.abund/sample.total) %>% # calculate category total and category prop for each sample
+  distinct(sample, cat, .keep_all = TRUE) %>%
+  ungroup () %>%
+  group_by (cat) %>%
+  mutate (cat.n = n(), cat.sum = sum(cat.prop), cat.mean = cat.sum/74) %>%
+  #mutate (cat.mean = mean(cat.prop)) %>%
+  dplyr::select (cat, cat.mean) %>%
+  distinct(cat, .keep_all = T) %>%
+  ungroup () %>%
+  arrange(desc(cat.mean)) %>%
+  mutate (rank = rank(desc(cat.mean)))
+rank.list <- rank.cat.abund$cat
+#######################################################################################
+
+abund.df <- all.red.temp %>% 
+  rownames_to_column('cat') %>%
+  pivot_longer (-cat, names_to = 'sample', values_to = 'abund') %>%
+  filter (abund > 0) %>% 
+  filter(!is.na(abund)) %>% 
+  left_join (., (ws.meta %>% dplyr::select (types, location) %>% dplyr::rename ('sample' = 1)), by = 'sample') %>%
+  group_by (sample) %>%
+  mutate (sample.total = sum(abund)) %>% #calculate sample total
+  group_by (sample, cat) %>%
+  mutate (cat.abund = sum(abund), cat.prop = cat.abund/sample.total) %>% # calculate category total and category prop for each sample
+  left_join (., (rank.cat.abund %>% dplyr::select(-cat.mean)), by = 'cat') %>%
+  ungroup ()
+
+as.data.frame(abund.df %>% group_by(sample) %>% summarise (sum(cat.prop)))
+
+n <- 20
+
+######## skip this section #######
+abund.summary <- abund.df %>% 
+  filter (rank <=n) %>% 
+  group_by (sample) %>% 
+  mutate(sample.sum = sum(cat.prop)) %>% 
+  distinct(sample, .keep_all = TRUE) %>% 
+  dplyr::select (sample, location,sample.sum) %>% 
+  ungroup() %>% 
+  group_by(location) %>% 
+  summarise (mean = mean(sample.sum), sd = sd(sample.sum), se = sd/sqrt(n()))
+abund.summary
+##################################
+
+rank.cut <- rank.list[1:n]
+abund.use.df <- abund.df %>% 
+  filter (rank <= n)  %>% 
+  mutate (cat = factor(cat,  rank.cut)) %>%
+  mutate (cat = stringr::str_replace (cat, "^f:", '')) %>% 
+  mutate (cat = factor(cat)) %>%
+  dplyr::select (sample,cat,cat.prop, rank) %>%
+  arrange (sample, rank) %>%
+  group_by (sample) %>%
+  mutate (cat = factor(cat, levels = unique(cat))) %>%
+  ungroup ()
+
+
+
+if (types == 'taxa') {
+  abund.use.df <- abund.use.df %>% left_join (., (seq.meta %>% dplyr::select (tax.label, paper.names)), by = c('sample'= 'tax.label')) 
+} else if (types == 'function') {
+  abund.use.df <- abund.use.df %>% left_join (., (seq.meta %>% dplyr::select (func.label, paper.names)), by = c('sample'= 'func.label'))
+}
+
+if (types == 'taxa') {
+  legend.label <- 'Families'  
+} else if (types == 'function') {
+  legend.label <- 'Level 2 Functions'
+}
+
+set.seed (23)
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+col=sample(col_vector, n)
+p <- ggplot (abund.use.df, aes (paper.names, cat.prop, fill = cat)) +
+  geom_bar (stat = 'identity') +
+  geom_col(position = position_stack(reverse = TRUE)) +
+  scale_y_continuous(expand = c(0,0))+
+  labs (x = '', y = 'Relative Proportion')+
+  scale_fill_manual(legend.label, values = c(col), guide = guide_legend(reverse = TRUE)) +
+  #theme_mike_doane ()
+  theme(axis.text.x=element_text(angle=90, size=12, hjust=1,vjust=0.5),
+        axis.text.y=element_text(angle=45, size=30, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_text (size = 40),
+        axis.title.y = element_text(size = 40),
+        legend.title=element_text(size=30), 
+        legend.text=element_text(size=25),
+        strip.text.x = element_text(size = 30),
+        #line = element_blank(),
+        rect = element_blank(),
+        axis.line.x = element_line(color="black", size = 2),
+        axis.line.y = element_line(color="black", size = 2))
+
+```
+
+Compressed location stacked barchart
+Figure 1 a,c
+```{r}
+rank.cat.abund <- all.red.temp %>% 
+  rownames_to_column('cat') %>%
+  pivot_longer (-cat, names_to = 'sample', values_to = 'abund') %>%
+  filter (abund > 0) %>% 
+  filter(!is.na(abund)) %>% 
+  left_join (., (ws.meta %>% dplyr::select (types, location) %>% dplyr::rename ('sample' = 1)), by = 'sample') %>%
+  group_by (sample) %>%
+  mutate (sample.total = sum(abund)) %>% #calculate sample total
+  group_by (sample, cat) %>%
+  mutate (cat.abund = sum(abund), cat.prop = cat.abund/sample.total) %>% # calculate category total and category prop for each sample
+  distinct(sample, cat, .keep_all = TRUE) %>%
+  ungroup () %>%
+  group_by (cat) %>%
+  mutate (cat.n = n(), cat.sum = sum(cat.prop), cat.mean = cat.sum/74) %>%
+  #mutate (cat.mean = mean(cat.prop)) %>%
+  dplyr::select (cat, cat.mean) %>%
+  distinct(cat, .keep_all = T) %>%
+  ungroup () %>%
+  arrange(desc(cat.mean)) %>%
+  mutate (rank = dense_rank(-cat.mean))
+rank.list <- rank.cat.abund$cat
+
+col_sel <- "location_1" #location, location_1
+
+all.red.temp.cond <- all.red.temp %>% 
+  rownames_to_column(group) %>%
+  pivot_longer (-group, names_to = 'sample', values_to = 'abund') %>% 
+  left_join (., (ws.meta %>% dplyr::select (types, col_sel) %>% 
+                   dplyr::rename ('names' = types)), by = c('sample' = 'names')) %>% 
+  group_by (!!rlang::sym(col_sel), !!rlang::sym(group)) %>% 
+  mutate (site.sum = mean(abund)) %>% 
+  filter (site.sum > 0) %>% 
+  dplyr::select(-c(abund, sample)) %>% 
+  distinct (!!rlang::sym(col_sel), !!rlang::sym(group), .keep_all = T) %>% 
+  pivot_wider (names_from = !!rlang::sym(group), values_from = site.sum, values_fill = c(site.sum = 0)) %>% 
+  dplyr::rename (col = 1) %>%
+  column_to_rownames("col")
+temp.merged.avg <- all.red.temp.cond
+temp.merged.avg <- decostand (all.red.temp.cond, method = 'total', MARGIN = 1) # df: Samples as Rows, Cat as Column
+
+###################################
+####### Do not run ################
+cat.rank <- temp.merged.avg %>% 
+  rownames_to_column('location') %>% 
+  pivot_longer (-location, names_to = 'cat', values_to = 'prop') %>% 
+  group_by (cat) %>%
+  mutate (cat.mean = mean(prop)) %>%
+  dplyr::select (-c(location, prop)) %>%
+  ungroup () %>%
+  distinct (cat, .keep_all = T) %>%
+  mutate(cat.rank = rank(desc(cat.mean))) %>%
+  arrange(cat.rank)
+avg.fam.list <- cat.rank %>% pull(cat)
+
+avg.fam.rank <- temp.merged.avg %>%
+  rownames_to_column('location') %>% 
+  pivot_longer (-location, names_to = 'cat', values_to = 'prop') %>%
+  group_by (cat) %>%
+  summarise (cat.mean = mean (prop))
+  
+####################################
+####################################
+
+
+avg.temp.bar <- temp.merged.avg %>%
+  rownames_to_column('col') %>% 
+  pivot_longer (-col, names_to = 'cat', values_to = 'prop') %>%
+  left_join (., (rank.cat.abund %>% dplyr::select(cat, rank)), by = 'cat') %>%
+  arrange(col, rank)
+
+n <- 20
+rank.cut <- rank.list[1:20]
+
+
+use_in_plot <- avg.temp.bar %>% 
+  filter (rank <= n) %>% 
+  mutate (cat = factor(cat, rank.cut)) %>%
+  mutate (cat = stringr::str_replace (cat, "^f:", ''), cat = factor(cat)) %>% 
+  mutate (location = factor(col, c('waterCancun', 'waterLapaz', 'waterNingaloo', 'waterPhilippines', 'waterTanzania', 'WSCancun', 'WSLapaz', 'WSNingaloo', 'WSPhilippines', 'WSTanzania')))
+
+#factor(col, c('Cancun', 'Tanzania', 'Ningaloo', 'Philippines', 'Lapaz'))
+#factor(col, c('waterCancun', 'waterLapaz', 'waterNingaloo', 'waterPhilippines', 'waterTanzania', 'WSCancun', 'WSLapaz', 'WSNingaloo', 'WSPhilippines', 'WSTanzania'))
+
+  
+if (types == 'function') { 
+
+use_in_plot <- avg.temp.bar %>% 
+  filter (rank <= n) %>% 
+  mutate (cat = factor(cat, rank.cut)) %>%
+  mutate (cat = stringr::str_replace (cat, "^f:", ''), cat = factor(cat)) %>% 
+  mutate (location = factor(location, c('Cancun', 'Tanzania', 'Ningaloo', 'Philippines', 'Lapaz')))
+
+levels(use_in_plot$cat) <- c('Arg, Urea, Polyamines','Branched-chain AA','Central carb meta','DNA repair','DNA replication','Elec. donating','Fatty acids general','Flagellar motility', 'Folate and pterines','Gram (-) cell wall','Lys, Thr, Met, Cys','Monosaccharides','Oxidative stress','Protein biosynthesis','Protein degradation', 'Purines','Resistance-antibiotics','Resistance-toxic comp.','RNA processing','Ton/tol transporters')
+
+abv <- c('Protein biosynthesis', 'Ton/tol transporters', 'Central carb meta','DNA repair','RNA processing', 'Lys, Thr, Met, Cys', 'Resistance-toxic comp.', 'Resistance-antibiotics', 'Branched-chain AA', 'Fatty acids general', 'Purines', 'Protein degradation', 'Gram (-) cell wall', 'DNA replication', 'Oxidative stress', 'Folate and pterines', 'Monosaccharides', 'Arg, Urea, Polyamines', 'Flagellar motility', 'Elec. donating')
+
+abv_rev <- c('Elec. donating', 'Flagellar motility', 'Arg, Urea, Polyamines', 'Monosaccharides', 'Folate and pterines', 'Oxidative stress', 'DNA replication', 'Gram (-) cell wall', 'Protein degradation', 'Purines', 'Fatty acids general', 'Branched-chain AA', 'Resistance-antibiotics', 'Resistance-toxic comp.', 'Lys, Thr, Met, Cys', 'RNA processing', 'DNA repair', 'Central carb meta', 'Ton/tol transporters', 'Protein biosynthesis')
+use_in_plot <- use_in_plot %>%  
+              arrange(location,rank) %>%
+              group_by (location) %>%
+              mutate (cat = factor(cat, abv_rev)) %>%
+              ungroup ()
+}
+
+if (types == 'taxa') {
+ 
+use_in_plot <- avg.temp.bar %>% 
+  filter (rank <= n) %>% 
+  mutate (cat = factor(cat, rank.cut)) %>%
+  mutate (cat = stringr::str_replace (cat, "^f:", '')) %>%
+  mutate(cat = factor(cat)) %>%
+  mutate (location = factor(col, c('waterCancun', 'waterLapaz', 'waterNingaloo', 'waterPhilippines', 'waterTanzania', 'WSCancun', 'WSLapaz', 'WSNingaloo', 'WSPhilippines', 'WSTanzania')))
+
+#levels(use_in_plot$cat) <- c('Alteromonadaceae','Flavobacteriaceae','Pseudoalteromonadaceae','Pseudomonadaceae','Halomonadaceae','Sphingomonadaceae','Pelagibacteraceae','Moraxellaceae', 'Rhodobacteraceae','Erythrobacteraceae','Chromatiaceae','Vibrionaceae','Burkholderiaceae','Idiomarinaceae','Synechococcaceae','Cyclobacteriaceae','Caulobacteraceae','Prochloraceae','Enterobacteriaceae ','Comamonadaceae')
+
+abv_rev <- c('Comamonadaceae', 'Enterobacteriaceae', 'Prochloraceae', 'Caulobacteraceae', 'Cyclobacteriaceae', 'Synechococcaceae', 'Idiomarinaceae', 'Burkholderiaceae', 'Vibrionaceae', 'Chromatiaceae', 'Erythrobacteraceae', 'Rhodobacteraceae', 'Moraxellaceae', 'Pelagibacteraceae', 'Sphingomonadaceae', 'Halomonadaceae', 'Pseudomonadaceae', 'Pseudoalteromonadaceae', 'Flavobacteriaceae', 'Alteromonadaceae')  
+use_in_plot <- use_in_plot %>%
+  arrange(col,rank) %>%
+  group_by (col) %>%
+  mutate (cat = factor(cat, abv_rev)) %>%
+  ungroup ()
+ }
+
+set.seed (23)
+qual_col_pals <- brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector <- unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+col <-sample(col_vector, n)
+
+if (types == 'taxa') {
+  legend.label <- 'Families'  
+} else if (types == 'function') {
+  legend.label <- 'Level 2 Functions'
+}
+
+ggplot (use_in_plot %>% mutate (location = recode (location, Lapaz = 'La Paz'), location = factor(location, levels = c ("WSCancun","waterCancun", "WSLapaz", "waterLapaz", "WSNingaloo", "waterNingaloo", "WSPhilippines", "waterPhilippines", "WSTanzania", "waterTanzania"))), aes (location, prop, fill = cat)) +
+  geom_bar (stat = 'identity') +
+  geom_col(position = position_stack(reverse = TRUE)) +
+  scale_y_continuous(expand = c(0,0))+
+  labs (x = '', y = 'Relative Proportion')+
+  scale_fill_manual(legend.label, values = c(col), guide = guide_legend(reverse = TRUE)) +
+  #theme_mike_doane ()
+  theme(axis.text.x=element_text(angle=90, size=30, hjust=1,vjust=0.5, face = 'bold'),
+        axis.text.y=element_text(angle=45, size=30, vjust=0.2, hjust = 0.9, face = 'bold'),
+        axis.title.x = element_text (size = 40),
+        axis.title.y = element_text(size = 40),
+        #legend.title=element_text(size=30), 
+        #legend.text=element_text(size=25),
+        legend.position = 'none',
+        strip.text.x = element_text(size = 30),
+        #line = element_blank(),
+        rect = element_blank(),
+        axis.line.x = element_line(color="black", size = 2),
+        axis.line.y = element_line(color="black", size = 2))
+
+p <- ggplot (use_in_plot %>% mutate (location = factor(location, levels = c ("WSCancun","waterCancun", "WSLapaz", "waterLapaz", "WSNingaloo", "waterNingaloo", "WSPhilippines", "waterPhilippines", "WSTanzania", "waterTanzania"))), aes (location, prop, fill = cat)) +
+  geom_bar (stat = 'identity') +
+  geom_col(position = position_stack(reverse = TRUE)) +
+  scale_y_continuous(expand = c(0,0))+
+  labs (x = '', y = 'Relative Proportion')+
+  scale_fill_manual(legend.label, values = c(col), guide = guide_legend(reverse = TRUE)) +
+  #theme_mike_doane ()
+  theme(axis.text.x=element_text(angle=90, size=15, hjust=1,vjust=0.5),
+        axis.text.y=element_text(angle=45, size=30, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_text (size = 40),
+        axis.title.y = element_text(size = 40),
+        legend.title=element_text(size=30), 
+        legend.text=element_text(size=25),
+        strip.text.x = element_text(size = 30),
+        #line = element_blank(),
+        rect = element_blank(),
+        axis.line.x = element_line(color="black", size = 2),
+        axis.line.y = element_line(color="black", size = 2))
+   
+leg <- ggpubr::get_legend(p)
+# Convert to a ggplot and print
+ggpubr::as_ggplot(leg)
+
+######## make a buble style graph #####
+
+bubbles <- ggplot (use_in_plot %>% mutate (location = recode (location, Lapaz = 'La Paz')), aes (location, cat, size = prop)) +
+  geom_point (aes (color = cat)) +
+  scale_size_continuous(range = c(1, 13)) +
+  #facet_grid (~sample.site) +
+  scale_color_manual('Families', values = c(col)) +
+  guides(colour = guide_legend(override.aes = list(size=10))) +
+  xlab ('') +
+  ylab(legend.label) +
+  theme_mike_doane() +
+  cowplot::background_grid() +
+  coord_cartesian(clip = "off") +
+  guides (col = FALSE) +
+  #guides(fill=guide_legend(nrow=2,byrow=TRUE)) +
+  theme(#axis.text.x=element_text(angle=0, size=20, vjust=1, hjust = 0.5, face = 'bold'),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.text.y=element_text(angle=0, size=20, vjust=0.2, hjust = 0.9, face = 'bold'),
+        axis.title.x = element_text (size = ),
+        axis.title.y = element_text(size = 40),
+        legend.position = 'bottom',
+        legend.margin=margin(t=-25),
+        #legend.box="vertical",
+        #legend.justification = 'below',
+        plot.margin=unit(c(0.5,0.5,0.5,0.5),"cm"))
+
+bubble <- ggplot (use_in_plot %>% mutate (location = recode (location, Lapaz = 'La Paz')), aes (location, cat, size = prop)) +
+  geom_point (aes (color = cat)) +
+  scale_size_continuous(range = c(1, 20)) +
+  #facet_grid (~sample.site) +
+  scale_color_manual('Families', values = c(col)) +
+  guides(colour = guide_legend(override.aes = list(size=10))) +
+  xlab ('') +
+  ylab(legend.label) +
+  theme_mike_doane() +
+  cowplot::background_grid() +
+  coord_cartesian(clip = "off") +
+  guides (col = FALSE) +
+  #guides(fill=guide_legend(nrow=2,byrow=TRUE)) +
+  theme(#axis.text.x=element_text(angle=0, size=20, vjust=1, hjust = 0.5),
+        axis.text.x=element_blank(),
+        axis.text.y=element_text(angle=0, size=20, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_text (size = 40),
+        axis.title.y = element_text(size = 40),
+        legend.position = 'bottom',
+        legend.box="vertical",
+        legend.justification = 'left',
+        plot.margin=unit(c(0.5,0.5,0.5,0.5),"cm"))
+
+  bubble.legend <- ggpubr::get_legend(bubble)
+# Convert to a ggplot and print
+bubble.legend <- ggpubr::as_ggplot(bubble.legend)
+
+#Heatmap for functions#
+heatmap.df <- avg.temp.bar %>% dplyr::select (location, cat, prop) %>% pivot_wider (., names_from = cat, values_from = prop) %>% column_to_rownames('location')
+heatmap.df <- as.matrix(heatmap.df)
+heatmap(heatmap.df)
+
+### mtcars example
+data <- as.matrix(mtcars)
+heatmap(data)
+data.t <- t(data)
+heatmap(data.t)
+```  
+
+Combining figures together
+```{r}
+#ggpubr::ggarrange(bubbles, mds.paper, bars, nrow =2, ncol=2, font.label = list(size = 14, face = "bold", color ="red"))
+egg::ggarrange(bubbles, mds.paper, bars, nrow =2, ncol=2, widths = c(2,2), heights = c(10,4))
+#cowplot::plot_grid(bubbles, mds.paper, bars, ncol=2, align = "v")
+
+```
+
+General summary statistics on dataset
+```{r}
+group.summary <- all.red.temp %>% 
+  rownames_to_column(group) %>%
+  pivot_longer (-group, names_to = 'sample', values_to = 'abund') %>% 
+  left_join (., (ws.meta %>% dplyr::select (types, location) %>% 
+                   dplyr::rename ('names' = types)), by = c('sample' = 'names')) %>% 
+  group_by (sample) %>%
+  mutate (sample.total = sum(abund)) %>%
+  ungroup () %>%
+  mutate (group.prop = abund/sample.total) %>% 
+  group_by (location, !!rlang::sym(group)) %>% 
+  summarize (group.mean = mean(group.prop), median = median(group.prop), group.sd = sd(group.prop), group.se = sd(group.prop)/sqrt(n()), group.n = n(), min = min(group.prop), max = max(group.prop)) %>%
+  arrange (location, desc(group.mean))
+
+if (types == 'taxa') { 
+write.csv (group.summary, paste0 (file.dir, 'analysis/mikedoane.figures/taxa/', types, '.summary.csv'))
+} else if (types == 'function') { 
+write.csv (group.summary, paste0 (file.dir, 'analysis/mikedoane.figures/level.2/', types, '.summary.csv'))
+  }
+``` 
+
+Sequence count and library size figures
+```{r}
+seq.meta <- read_excel(paste(file.dir, 'analysis', 'sample.meta.xlsx', sep = '/'), sheet = 'seq.meta')
+seq.meta$`Prop of reads to MAGs` <- as.numeric(seq.meta$`Prop of reads to MAGs`)
+#seq.meta <- rename(seq.meta, !!sample.name := 'tax.label')
+
+comparison <- 'location' #'location', 'ocean', 'population'
+ws.adonis <- ws.meta %>% 
+  dplyr::select (types, comparison) %>% 
+  dplyr::rename('names' = 1) %>% 
+  semi_join (., (temp %>% rownames_to_column('sample')), by = c('names' = 'sample'))
+
+div <- as.data.frame(all.red.temp.t)
+div.df <- vegan::diversity(div, index = 'shannon')
+div.df <- as.data.frame(div.df)
+div.df <- div.df %>% dplyr::rename ('H' = 1)
+div.df$eff.div <- exp(div.df[,1])
+div.df$richness <- specnumber(div, MARGIN=1)
+div.df$p.even <- div.df$H/log(div.df$richness)
+temp.dispersion <- betadisper(temp.dist, group = ws.adonis$location, type = 'centroid')
+#chao.df <- specpool (div, ws.meta$location)
+div.df <- div.df %>% 
+  rownames_to_column(sample.name) %>% 
+  left_join (., (ws.meta %>% dplyr::select (sample.name, location)), by = sample.name) 
+
+
+if (types == 'taxa') { 
+seq.meta <- seq.meta %>% rename(!!sample.name:= 'tax.label') %>% left_join (., (div.df %>% dplyr::select (sample.name, eff.div)), by = sample.name)
+} else if (types == 'function') {
+  seq.meta <- seq.meta %>% rename(!!sample.name:= 'func.label') %>% left_join (., (div.df %>% dplyr::select (sample, eff.div)), by = sample.name)
+}
+
+seq.data <- c('total count', 'total len','x', 'n50','n75', 'Superfocus count', 'taxonomic counts', '% function known', '% taxonomy known', 'Prop of reads to MAGs')
+
+t <- 3
+plot.div <- function (t) { 
+  seq.name <- seq.data[t]
+  h <- sym(seq.name)
+  stat <- dplyr::pull(seq.meta, seq.name)
+  
+  
+    
+  plot(ggplot (seq.meta, aes (Location, !!h, fill = Location)) +
+  geom_boxplot() +
+  scale_fill_manual('Location' , values = group.colors$color) + #name = group.colors$location
+  ggtitle (paste0 (seq.name)) +
+  theme_mike_doane() +
+  theme(axis.text.x=element_text(angle=90, size=30, vjust=0.5, hjust = 1),
+        axis.text.y=element_text(angle=45, size=30, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_text (size = 40),
+        axis.title.y = element_text(size = 40),
+        legend.title=element_text(size=30), 
+        legend.text=element_text(size=30),
+        strip.text.x = element_text(size = 30))
+)
+
+
+dunn.test::dunn.test (stat, seq.meta$Location, method ='bh' )
+}
+
+plot.div(10)
+
+seq.data.summary <- seq.meta %>% 
+    dplyr::select(-c(combined.fastqname, tax.label, func.label, shortest, longest, n50, n75, Collection.date, Used.in.Network)) %>% 
+    pivot_longer (cols = -Location, names_to = 'lib.stat', values_to = 'score') %>% 
+    group_by (Location, lib.stat) %>%
+    summarise(mean.score = mean(score), sd.score = sd(score), se.score = sd(score)/sqrt(n()), min = min(score), max = max(score))
+write.csv (seq.data.summary, paste0 (file.dir, 'analysis/mikedoane.figures/meta.data/', 'meta.data.summary.csv'))
+
+fit <- lm (`Prop of reads to MAGs` ~ eff.div, data = seq.meta)
+
+ggplot(seq.meta, aes(eff.div, `Prop of reads to MAGs`)) +
+  geom_point (size = 6, aes (color = Location)) +
+  stat_smooth (size = 4, method = 'lm', col = 'red', se = F) +
+  labs(title = paste("Adj R2 = ",signif(summary(fit)$adj.r.squared, 2),
+                     "Intercept =",signif(fit$coef[[1]],2 ),
+                     " Slope =",signif(fit$coef[[2]], 2),
+                     " P =",signif(summary(fit)$coef[2,4], 2))) +
+  theme_mike_doane()
+
+HERE
+``` 
+
+MAGs Subsystem Heatmap
+```{r}
+seq.meta <- read.csv (paste0(file.dir, 'analysis/mikedoane.figures/mags/', 'mags_subsystems.csv'))
+seq.meta <- seq.meta %>% dplyr::rename ('bin' = 1, 'Protein_class' = 'Class')
+seq.meta$bin <- trimws(seq.meta$bin)
+mag.names <- read.csv (paste0(file.dir, 'analysis/mikedoane.figures/mags/', 'mags_taxa.csv'))
+mag.names <- mag.names %>% dplyr::rename ('bin' = 1)
+mag_groups <- data.frame(bin = c("bin_1","bin_10","bin_100","bin_105", "bin_107", "bin_11","bin_115", "bin_12", "bin_14", "bin_17",  "bin_3","bin_30",  "bin_37", "bin_39",  "bin_4", "bin_42",  "bin_44", "bin_49",  "bin_50",  "bin_53",  "bin_55",  "bin_56",  "bin_57", "bin_58", "bin_62","bin_63", "bin_66", "bin_69","bin_7", "bin_77", "bin_79", "bin_85", "bin_91", "bin_97", "bin_32"
+),
+                         group = c("bacter","bacter","generalist","generalist","generalist","generalist","bacter","generalist","generalist","generalist","generalist","generalist","generalist","generalist","generalist","generalist","generalist","generalist","generalist","generalist","generalist","bacter","bacter","generalist","generalist","generalist","bacter","generalist","bacter","bacter","generalist","generalist","bacter","generalist", "pelagi"
+))
+
+seq.meta <- seq.meta %>% 
+  left_join (., (mag.names %>% dplyr::select (bin, Taxa, Class)), by = 'bin') %>% 
+  left_join (., (mag_groups), by = "bin") %>%
+  #filter(bin != "bin_32") %>%
+  filter (!Subclass %in% c("Phages, Prophages", "Hydrocarbons", "Host-pathogen interactions", "Quorum sensing and biofilm formation", "Transposable elements", "S-layer", "Coenzyme F420", "Experimental Subsystems", "Pathogenicity islands", "Miscellaneous")) %>%
+  unite ('name', bin, Taxa, remove= FALSE ) %>%
+  mutate (bin = factor(bin))
+
+metadata.row <- seq.meta %>% 
+  dplyr::select (name, Class, Type) %>% 
+  distinct(., name, .keep_all = T) %>%
+  column_to_rownames('name')
+
+metadata.row[metadata.row == ''] = 'Proteobacteria'
+seq.meta[seq.meta =="Ribosomally-synthesized post-translationally modified peptides (RiPPs)"] = "RiPPs"
+seq.meta[seq.meta == "Glutamine, glutamate, aspartate, asparagine; ammonia assimilation"] = "ammonia assimilation"
+seq.meta[seq.meta == "Heme Biosynthesis: protoporphyrin-, coproporphyrin- and siroheme-dependent pathways"] = "Heme Biosynthesis"
+seq.meta[seq.meta == "Tripartite efflux system (of RND type) associated with Geranylgeranyl-PP synthase"] = "Tripartite efflux system"
+seq.meta[seq.meta == "Protein and nucleoprotein secretion system, Type IV"] = "Type IV secetion system"
+seq.meta[seq.meta == "Peptidoglycan (Bacteria) or other polymers (Archaea)"] = "Peptidoglycan and polymers"
+seq.meta[seq.meta == "Programmed Cell Death and Toxin-antitoxin Systems"] = "Toxin-antitoxin Systems"
+
+
+
+metadata.col <- seq.meta %>% 
+  dplyr::select (Subclass, Protein_class) %>% 
+  distinct(., Subclass, .keep_all = T) %>% 
+  column_to_rownames('Subclass')
+
+metadata.col[metadata.col == ''] = 'Misc'
+
+### Class ###
+###Summarising values based on Class#######
+mags <- seq.meta %>% 
+  dplyr::rename ('mag.name' = 1) %>%  
+  group_by (mag.name, Protein_class) %>% 
+  mutate (summed.count = sum(Gene.Count)) %>% 
+  dplyr::select (mag.name, Protein_class, summed.count) %>%
+  distinct(., Protein_class, .keep_all = T) %>%
+  mutate (Protein_class = factor(Protein_class)) %>%
+  pivot_wider (names_from = Protein_class, values_from = summed.count, values_fill = list(summed.count = 0)) %>%
+  column_to_rownames('mag.name')
+
+mags.hist <- as.matrix(mags)
+#gplots::heatmap.2 (mags.hist, scale = 'row', col= 'bluered', tracecol=NA)
+fontsize_row = 10 - nrow(mags.hist) / 18
+
+r <- pheatmap::pheatmap(mags.hist, 
+                        show_rownames=F, 
+                        cluster_cols=T, 
+                        cluster_rows=T,
+                        cex=1, clustering_distance_rows="euclidean", cex=1,
+                        #clustering_distance_cols="euclidean", clustering_method="complete", border_color=FALSE,
+                        color = colorRampPalette(c("navy", "white", "firebrick3"))(50), 
+                        scale = 'column', 
+                        fontsize_col=fontsize_row, 
+                        fontsize_row = fontsize_row,
+                        angle_col = 315,
+                        annotation_row=metadata.row,
+                        annotation_names_row = FALSE,
+                        #annotation_col = metadata.col,
+                        annotation_names_col = FALSE,
+                        cutree_rows = 8)
+
+r <- pheatmap::pheatmap(mags.hist, color = colorRampPalette(c("navy", "white", "firebrick3"))(50), scale = 'column', fontsize_col=fontsize_row, angle_col = 45)
+
+t.mags.heat <- t(mags.hist)
+pheatmap::pheatmap(t.mags.heat, color = colorRampPalette(c("navy", "white", "firebrick3"))(50), scale = 'column', fontsize_row=fontsize_row, angle_col = 45)
+
+mags.prop <- decostand (mags, method = 'total', MARGIN = 1)
+mags.prop.mat <- as.matrix(mags.prop)
+mags.prop.t <- t(mags.prop)
+
+
+
+pheatmap::pheatmap(mags.prop, color = colorRampPalette(c("navy", "white", "firebrick3"))(50),  angle_col = 45)
+pheatmap::pheatmap(mags.prop.t, color = colorRampPalette(c("navy", "white", "firebrick3"))(50), scale = 'row', angle_col = 45)
+
+### Subclass ###
+mags.long <- seq.meta %>% 
+  group_by (name, Subclass) %>% 
+  mutate (summed.count = sum(Gene.Count)) %>% 
+  dplyr::select (name, Subclass, summed.count) %>%
+  distinct(., Subclass, .keep_all = T) %>%
+  mutate (Subclass = factor(Subclass))
+  
+mags.wide <- mags.long %>%  
+  pivot_wider (names_from = Subclass, values_from = summed.count, values_fill = list(summed.count = 0)) %>%
+  column_to_rownames('name')
+
+
+
+mags.hist <- as.matrix(mags.wide)
+#colnames(mags.hist) <- abbreviate(colnames(mags.hist), minlength = 15)
+
+#gplots::heatmap.2 (mags.hist, scale = 'row', col= 'bluered', tracecol=NA)
+fontsize_row = 10 - nrow(mags.hist) / 18
+
+class.meta <- metadata.row %>% select(Class)
+type.meta <- metadata.row %>% select(Type)
+##### This is the paper figure #####
+r <- pheatmap::pheatmap(mags.hist, 
+                        show_rownames=T, 
+                        cluster_cols=F, 
+                        cluster_rows=T,
+                        cex=1, clustering_distance_rows="euclidean", cex=1,
+                        #clustering_distance_cols="euclidean", clustering_method="complete", border_color=FALSE,
+                        color = colorRampPalette(c("navy", "white", "firebrick3"))(50), 
+                        scale = 'column', 
+                        fontsize_col=8, 
+                        fontsize_row = fontsize_row,
+                        angle_col = 315,
+                        annotation_row=class.meta,
+                        annotation_names_row = FALSE,
+                        annotation_col = metadata.col,
+                        annotation_names_col = FALSE,
+                        cutree_rows = 3)
+
+r <- pheatmap::pheatmap(t(mags.hist), 
+                        show_colnames = F,
+                        cluster_rows=F,
+                        cluster_cols = T,
+                        cex=1, 
+                        clustering_distance_cols="euclidean", cex=1,
+                        color = colorRampPalette(c("navy", "white", "firebrick3"))(50), 
+                        scale = 'column', 
+                        fontsize_col=fontsize_row, 
+                        fontsize_row = fontsize_row,
+                        angle_col = 45,
+                        angle_row = 45,
+                        #annotation_row=metadata.col,
+                        #annotation_names_row = FALSE,
+                        annotation_col = metadata.row,
+                        annotation_names_col = FALSE,
+                        cutree_rows = 5)
+
+mag.dist <-dist(mags.hist, method = 'euclidean')
+mag.clust <- hclust (mag.dist, method = 'complete')
+plot(mag.clust)
+mag.label <- as.data.frame(mag.clust$label)
+mag.label <- mag.label %>% rownames_to_column() %>% mutate (rowname = factor(rowname))
+mag.order <- as.data.frame(mag.clust$order)
+mag.order[,1] <- as.factor(mag.order[,1])
+mag.order <- mag.order %>% dplyr::rename ('rowname'= 1) %>% left_join (., mag.label, by = "rowname") %>% dplyr::rename("mag.name" = 2) 
+
+#### Example of refactoring variables ####
+deseq2VST$variable <- factor(deseq2VST$variable, levels=clusterSample$labels[clusterSample$order])
+
+t.mags.heat <- t(mags.hist)
+pheatmap::pheatmap(t.mags.heat, color = colorRampPalette(c("navy", "white", "firebrick3"))(50), scale = 'column', fontsize_row=fontsize_row, angle_col = 45)
+
+gplots::heatmap.2 (t.mags.heat, scale = 'row', col= 'bluered', tracecol=NA)#303030"
+
+mags.prop <- decostand (mags, method = 'total', MARGIN = 1)
+mags.prop.mat <- as.matrix(mags.prop)
+mags.prop.t <- t(mags.prop)
+
+pheatmap::pheatmap(mags.prop, color = colorRampPalette(c("navy", "white", "firebrick3"))(50), scale = 'column', angle_col = 45)
+pheatmap::pheatmap(mags.prop.t, color = colorRampPalette(c("navy", "white", "firebrick3"))(50), scale = 'row', angle_col = 45)
+
+#Subsystem level
+mags <- seq.meta %>% 
+  group_by (name, Subsystem.Name) %>% 
+  mutate (summed.count = sum(Gene.Count)) %>% 
+  dplyr::select (name, Subsystem.Name, summed.count) %>%
+  distinct(., Subsystem.Name, .keep_all = T) %>%
+  mutate (Subsystem.Name = factor(Subsystem.Name)) %>%
+  pivot_wider (names_from = Subsystem.Name, values_from = summed.count, values_fill = list(summed.count = 0)) %>%
+  filter (name != 'bin_1 _NA') %>%
+  filter (name != 'bin_7 _NA') %>%
+  column_to_rownames('name')
+
+mags.hist <- as.matrix(mags)
+#gplots::heatmap.2 (mags.hist, scale = 'row', col= 'bluered', tracecol=NA)
+fontsize_row = 10 - nrow(mags.hist) / 18
+r <- pheatmap::pheatmap(mags.hist, color = colorRampPalette(c("navy", "white", "firebrick3"))(50), scale = 'row', fontsize_col=fontsize_row, angle_col = 45)
+
+t.mags.heat <- t(mags.hist)
+pheatmap::pheatmap(t.mags.heat, color = colorRampPalette(c("navy", "white", "firebrick3"))(50), scale = 'column', fontsize_row=fontsize_row, angle_col = 45)
+
+gplots::heatmap.2 (t.mags.heat, scale = 'row', col= 'bluered', tracecol=NA)#303030"
+
+mags.prop <- decostand (mags, method = 'total', MARGIN = 1)
+mags.prop.mat <- as.matrix(mags.prop)
+mags.prop.t <- t(mags.prop)
+
+pheatmap::pheatmap(mags.prop, color = colorRampPalette(c("navy", "white", "firebrick3"))(50), scale = 'row', angle_col = 45)
+pheatmap::pheatmap(mags.prop.t, color = colorRampPalette(c("navy", "white", "firebrick3"))(50), scale = 'row', angle_col = 45)
+
+colnames(mat) <- str_sub(colnames(mat), 1, -3)
+rownames(df) <- colnames(mat)
+
+``` 
+DeSEQ MAG subsystem differences
+```{r}
+seq.meta <- read.csv (paste0(file.dir, 'analysis/mikedoane.figures/mags/', 'mags_subsystems.csv'))
+seq.meta <- seq.meta %>% dplyr::rename ('bin' = 1, 'Protein_class' = 'Class')
+seq.meta$bin <- trimws(seq.meta$bin)
+mag.names <- read.csv (paste0(file.dir, 'analysis/mikedoane.figures/mags/', 'mags_taxa.csv'))
+mag.names <- mag.names %>% dplyr::rename ('bin' = 1)
+mag_groups <- data.frame(bin = c("bin_1","bin_10","bin_100","bin_105", "bin_107", "bin_11","bin_115", "bin_12", "bin_14", "bin_17",  "bin_3","bin_30",  "bin_37", "bin_39",  "bin_4", "bin_42",  "bin_44", "bin_49",  "bin_50",  "bin_53",  "bin_55",  "bin_56",  "bin_57", "bin_58", "bin_62","bin_63", "bin_66", "bin_69","bin_7", "bin_77", "bin_79", "bin_85", "bin_91", "bin_97", "bin_32"
+),
+                         group = c("bacter","bacter","generalist","generalist","generalist","generalist","bacter","generalist","generalist","generalist","generalist","generalist","generalist","generalist","generalist","generalist","generalist","generalist","generalist","generalist","generalist","bacter","bacter","generalist","generalist","generalist","bacter","generalist","bacter","bacter","generalist","generalist","bacter","generalist", "pelagi"
+))
+
+seq.meta <- seq.meta %>% 
+  left_join (., (mag.names %>% dplyr::select (bin, Taxa, Class)), by = 'bin') %>% 
+  left_join (., (mag_groups), by = "bin") %>%
+  filter(bin != "bin_32") %>%
+  filter (!Subclass %in% c("Phages, Prophages", "Hydrocarbons", "Host-pathogen interactions", "Quorum sensing and biofilm formation", "Transposable elements", "S-layer", "Coenzyme F420", "Experimental Subsystems", "Pathogenicity islands", "Miscellaneous")) %>%
+  unite ('name', bin, Taxa, remove= FALSE ) %>%
+  mutate (bin = factor(bin))
+
+metadata.row <- seq.meta %>% 
+  dplyr::select (name, Class) %>% 
+  distinct(., name, .keep_all = T) %>%
+  column_to_rownames('name')
+
+metadata.row[metadata.row == ''] = 'Proteobacteria'
+seq.meta[seq.meta =="Ribosomally-synthesized post-translationally modified peptides (RiPPs)"] = "RiPPs"
+seq.meta[seq.meta == "Glutamine, glutamate, aspartate, asparagine; ammonia assimilation"] = "ammonia assimilation"
+seq.meta[seq.meta == "Heme Biosynthesis: protoporphyrin-, coproporphyrin- and siroheme-dependent pathways"] = "Heme Biosynthesis"
+seq.meta[seq.meta == "Tripartite efflux system (of RND type) associated with Geranylgeranyl-PP synthase"] = "Tripartite efflux system"
+seq.meta[seq.meta == "Protein and nucleoprotein secretion system, Type IV"] = "Type IV secetion system"
+seq.meta[seq.meta == "Peptidoglycan (Bacteria) or other polymers (Archaea)"] = "Peptidoglycan and polymers"
+seq.meta[seq.meta == "Programmed Cell Death and Toxin-antitoxin Systems"] = "Toxin-antitoxin Systems"
+
+metadata.deseq <- seq.meta %>% 
+  dplyr::select (bin, group) %>% 
+  distinct(., bin, .keep_all = T) %>%
+  mutate (group = factor(group))
+
+metadata.col[metadata.col == ''] = 'Misc'
+
+###### Subclass
+mags.long <- seq.meta %>% 
+  group_by (bin, Subclass) %>% 
+  mutate (summed.count = sum(Gene.Count)) %>%
+  dplyr::select (bin, Subclass, summed.count) %>%
+  distinct(., Subclass, .keep_all = T) %>%
+  mutate (Subclass = factor(Subclass))
+
+mags.wide <- mags.long %>% 
+  pivot_wider (names_from = bin, values_from = summed.count, values_fill = list(summed.count = 0))
+mags.wide <- as.data.frame(mags.wide)
+### Make Deseq Object
+dds <- DESeqDataSetFromMatrix (countData = mags.wide,
+                               colData = metadata.deseq,
+                               design = ~group, tidy = TRUE)
+
+### Run Deseq
+dds.out <- DESeq(dds)
+
+### view results
+res.temp <- results(dds.out)
+res.temp <- res.temp[order(res.temp$padj),]
+
+####code below creates your own dataframe that you can manipulate 
+lnames <- res.temp@rownames
+lcolnames <- c('baseMean', 'log2FoldChange', 'lfcSE', 'stat', 'pvalue', 'padj')
+l1<- res.temp@listData$baseMean
+l2 <- res.temp@listData$log2FoldChange
+l3 <- res.temp@listData$lfcSE
+l4 <- res.temp@listData$stat
+l5 <- res.temp@listData$pvalue
+l6 <- res.temp@listData$padj
+
+results.df <- cbind (l1, l2, l3, l4, l5, l6)
+rownames(results.df) <- lnames
+colnames(results.df) <- lcolnames
+results.df <- as.data.frame(results.df)
+
+
+#reset par
+par(mfrow=c(1,1))
+# Make a basic volcano plot
+with(res.temp, plot(log2FoldChange, -log10(pvalue), pch=20, main="Volcano plot", xlim=c(-3,3)))
+
+# Add colored points: blue if padj<0.01, red if log2FC>1 and padj<0.05)
+with(subset(res.temp, padj<.01 ), points(log2FoldChange, -log10(pvalue), pch=20, col="blue"))
+with(subset(res.temp, padj<.01 & abs(log2FoldChange)>2), points(log2FoldChange, -log10(pvalue), pch=20, col="red"))
+```
+
+Genome representatives from central Node groups
+```{r}
+filenames <- list.files (paste0(file.dir, "analysis/mikedoane.figures/PATRIC_genomes/"), pattern = ".csv", full.names = T)
+
+genomes <- list ()
+
+for (i in 1:length(filenames)) {
+  temp.file <- read.csv (filenames[i], header = TRUE)
+  genomes[[(filenames[i])]] <- temp.file
+  
+}
+
+all.genomes <- bind_rows(genomes)
+#write.csv (all.genomes, paste0(file.dir, "analysis/mikedoane.figures/PATRIC_genomes/all.genomes.csv"))
+all.genomes <- all.genomes %>% mutate_all (na_if, "")
+all.genomes <- all.genomes %>% mutate (Subclass = ifelse (is.na(Subclass), Class, Subclass))
+
+subsystem.level <- "Subclass" #Class, Subclass, Subsystem.Name
+mags <- all.genomes %>% 
+  group_by (organism, !!sym(subsystem.level)) %>% 
+  mutate (summed.count = sum(Gene.Count)) %>% 
+  distinct (!!subsystem.level, .keep_all = T) %>% 
+  dplyr::select (organism, !!subsystem.level, summed.count) %>%
+  #distinct(., !!subsystem.level, .keep_all = T) %>%
+  mutate (!! subsystem.level := factor(!!as.name(subsystem.level))) %>%
+  pivot_wider (names_from = !!subsystem.level, values_from = summed.count, values_fill = list(summed.count = 0)) %>%
+  column_to_rownames('organism')
+
+mags <- t(mags)
+mags.hist <- as.matrix(mags)
+heatmap(mags.hist)
+#gplots::heatmap.2 (mags.hist, scale = 'row', col= 'bluered', tracecol=NA)
+fontsize_row = 10 - nrow(mags.hist) / 18
+
+r <- pheatmap::pheatmap(mags, color = colorRampPalette(c("navy", "white", "firebrick3"))(50), scale = 'column', fontsize_col=fontsize_row, angle_col = 45)
+
+r <- pheatmap::pheatmap(mags.hist, 
+                        show_rownames=T, cluster_cols=T, cluster_rows=T,
+                        cex=1, clustering_distance_rows="euclidean", cex=1,
+                        clustering_distance_cols="euclidean", clustering_method="complete", border_color=FALSE,
+                        color = colorRampPalette(c("navy", "white", "firebrick3"))(50), 
+                        scale = 'row', 
+                        #fontsize_col=fontsize_row, 
+                        angle_col = 45,
+                        #annotation_row=metadata.row,
+                        annotation_names_row = FALSE,
+                        #annotation_col = metadata.col,
+                        annotation_names_col = FALSE),
+                        cutree_rows = 5)
+```
+
+Cluster relative abundance across samples
+```{r}
+loc.abund.df <- all.red.temp %>% 
+  rownames_to_column('cat') %>%
+  pivot_longer (-cat, names_to = 'sample', values_to = 'abund') %>%
+  filter (abund > 0) %>% 
+  filter(!is.na(abund)) %>% 
+  left_join (., (ws.meta %>% dplyr::select (types, location) %>% dplyr::rename ('sample' = 1)), by = 'sample') %>%
+  group_by (location, cat) %>%
+  mutate (loc.n.samples = n(), loc.mean = mean(abund), loc.sd = sd(abund), loc.se = loc.sd/sqrt(n())) %>%
+  ungroup () %>%
+  dplyr::select(-sample) %>% 
+  distinct (cat, location, .keep_all = T)
+
+
+full.df <- all.red.temp %>% 
+  rownames_to_column('cat') %>%
+  pivot_longer (-cat, names_to = 'sample', values_to = 'abund') %>%
+  filter (abund > 0) %>% 
+  filter(!is.na(abund)) %>% 
+  group_by (sample) %>%
+  mutate (sample.total = sum(abund), cat.prop = abund/sample.total) %>%
+  ungroup () %>%
+  dplyr::select (-sample.total) %>%
+  left_join (., (ws.meta %>% 
+                   dplyr::select (types, location) %>% 
+                   dplyr::rename ('sample' = 1)), by = 'sample')
+
+if (types == 'taxa') { 
+net.dir <- read.csv (paste0 (file.dir, 'network.final.data/jody_optimised_clusters/merged.clusters.taxa.csv'), header = TRUE)
+centrality.dir <- read.csv (paste0(file.dir, 'Net_10_20/Taxa/Network_Summary_MCL_redo/taxa_summary_table_new_mcl_exp3.csv'), header = T)
+abund.df <- loc.abund.df %>% 
+  left_join (., (net.dir %>% dplyr::select (-clusterID) %>% dplyr::rename ('cat'= 1)), by = c('location' = 'site', 'cat'='cat')) %>%
+  left_join (., (centrality.dir %>% dplyr::select (-c(cluster_mem, X)) %>% dplyr::rename('cat' = 2)), by = c('location' = 'location', 'cat' = 'cat')) %>%
+  drop_na () %>%
+  left_join (., (group.assignment %>% dplyr::select (superkingdom, phylum, class, order, family) %>% distinct (family, .keep_all = T)), by = c('cat' = 'family'))
+} else if (types == 'function') { 
+net.dir <- read.csv (paste0(file.dir, 'network.final.data/jody_optimised_clusters/merged.clusters.function.csv'), header = TRUE)
+net.dir <- net.dir %>% dplyr::rename ('site' = 'location', 'cluster.name' = 'cluster')
+centrality.dir <- read.csv (paste0(file.dir, 'Net_10_20/Function/Functional_Network_MCL_Redo/function_summary_table_new_mcl_exp3.csv'), header = T)
+abund.df <- loc.abund.df %>% 
+  left_join (., (net.dir %>% 
+                   dplyr::select (-clusterID) %>% 
+                   dplyr::rename ('cat'= 1)), by = c('location' = 'site', 'cat'='cat')) %>%
+  left_join (., (centrality.dir %>% 
+                   dplyr::select (-c(cluster_mem, X)) %>% 
+                   dplyr::rename('cat' = 2)), by = c('location' = 'location', 'cat' = 'cat')) %>%
+  drop_na () %>%
+  left_join (., (group.assignment %>% 
+                   dplyr::select (Subsystem.Level.1, Subsystem.Level.2) %>% 
+                   distinct (Subsystem.Level.2, .keep_all = T)), by = c('cat' = 'Subsystem.Level.2'))
+  }
+
+
+
+
+#### Histogram of betweennes and eigen centrality distributions #####
+bin.size <- 40
+plt1 <- ggplot (abund.df, aes (eigen_cen, color = location, fill = location)) +
+  geom_freqpoly(aes (x = eigen_cen, y = (..count..)/sum(..count..)), bins = bin.size, size = 4) +
+  ylab('Relative Frequency') +
+  facet_grid (~location) +
+  scale_color_manual(values = c('#CC6677', '#4477AA','#DDCC77','#009988')) +
+  scale_fill_manual(values = c('#CC6677', '#4477AA','#DDCC77','#009988')) + #name = group.colors$location
+  labs(color='Location') +
+  theme_mike_doane() +
+  ggtitle (paste0('bin size = ', bin.size)) +
+  theme(axis.text.x= element_blank(), #element_text(angle=90, size=30, vjust=0.5, hjust = 1)
+        axis.text.y=element_text(angle=45, size=30, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_blank (), #element_text (size = 40)
+        axis.title.y = element_text(size = 40),
+        legend.title=element_text(size=30), 
+        legend.text=element_text(size=30),
+        strip.text.x = element_text(size = 30))
+
+plt2 <- ggplot (abund.df, aes (x = '', y = eigen_cen, color = location)) +
+  geom_boxplot () +
+  geom_jitter () +
+  coord_flip () +
+  facet_grid (~location) +
+  scale_color_manual(values = c('#CC6677', '#4477AA','#DDCC77','#009988')) +
+  scale_fill_manual(values = c('#CC6677', '#4477AA','#DDCC77','#009988')) + #name = group.colors$location
+  xlab ('') +
+  ylab ('Eigen Centrality Score') +
+  ggtitle ('') +
+  theme_mike_doane() +
+  theme(axis.text.x=element_text(angle=90, size=30, vjust=0.5, hjust = 1),
+        axis.text.y=element_text(angle=45, size=30, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_text (size = 40),
+        axis.title.y = element_text(size = 40),
+        legend.title=element_blank(), 
+        legend.text=element_text(size=30),
+        legend.position = 'none',
+        strip.text.x = element_blank(), #element_text(size = 30)
+        strip.text.y = element_blank(),
+        strip.background = element_blank())
+
+cowplot::plot_grid(plt1, plt2,
+          ncol=1, rel_heights = c(2,1),
+          align = 'v', axis = 'lr')
+
+
+
+cluster.rank <- abund.df %>% 
+  group_by (location, cluster.name) %>% 
+  mutate (mean.bet = mean (between_cen), mean.eig = mean(eigen_cen)) %>% #mean betweenness for each cluster
+  distinct(location, cluster.name, .keep_all = T) %>% arrange (location, desc(mean.bet)) %>% 
+  group_by (location) %>% 
+  mutate (clust.bet.rank = row_number()) %>% #rank cluster by location
+  ungroup () %>% 
+  arrange (location, desc(mean.eig)) %>% 
+  group_by (location) %>% 
+  mutate (clust.eig.rank = row_number()) %>% #number of 
+  dplyr::select (-c(cat, abund, loc.n.samples, superkingdom, phylum, class, order, between_cen, eigen_cen, loc.mean, loc.sd, loc.se)) %>%
+  ungroup ()
+
+abund.df <- abund.df %>% left_join (., (cluster.rank), by = c('location'='location', 'cluster.name' = 'cluster.name'))
+
+write.csv (abund.df, paste0(file.dir, '/network.final.data/jody_optimised_clusters/cluster.ranks.csv'))
+
+ggplot(abund.df, aes (eigen_cen, log(loc.se), color = location)) +
+  geom_point () +
+  geom_smooth (method ='lm', se = F) +
+  theme_mike_doane()
+
+n <- 53
+set.seed (27)
+qual_col_pals <- brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector <- unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+col <-sample(col_vector, n)
+abund.df <- abund.df %>% mutate (clust.bet.rank = factor(clust.bet.rank), clust.eig.rank = factor(clust.eig.rank))
+ggplot (abund.df %>% filter (clust.eig.rank %in% c(1,2,3)), aes (cluster.name, loc.mean, fill = order)) +
+  geom_bar (position="stack", stat="identity") +
+  facet_grid(~location, scales = 'free') +
+  scale_fill_manual('Location', values = c(col), guide = guide_legend(reverse = TRUE)) +
+  theme_mike_doane()
+
+full.df <- full.df %>% 
+  left_join (., (net.dir %>% dplyr::rename ('cat'= 1)), by = c('location' = 'site', 'cat'='cat')) %>%
+  left_join (., (centrality.dir %>% dplyr::select (-c( X)) %>% dplyr::rename('cat' = 2)), by = c('location' = 'location', 'cat' = 'cat')) %>%
+  drop_na ()
+
+full.df.prop <- full.df %>%
+  group_by(sample) %>%
+  mutate (sample.sum = sum(abund)) %>% 
+  group_by (sample, cluster_mem) %>% 
+  mutate (clust.sum = sum(abund), clust.prop = clust.sum/sample.sum) %>%
+  group_by (location, cluster_mem) %>%
+  mutate (mean.clust = mean(clust.prop))
+
+full.df.prop <- full.df %>%
+  group_by (location, cat) %>%
+  mutate (loc_cat_mean = mean (cat.prop)) %>%
+  distinct(location, cat, .keep_all = T) %>%
+  select (cat, location, clusterID, cluster.name, cluster_mem, loc_cat_mean, eigen_cen)
+
+n <- 57
+set.seed (23)
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+col=sample(col_vector, n)
+
+ggplot (full.df %>% filter (eigen_cen >= 0.3), aes (sample, cat.prop, fill = cat)) +
+  geom_bar (stat = 'identity') +
+  ylab ('% of total') +
+  scale_fill_manual('Location', values = c(col)) +
+  theme_mike_doane() +
+  theme(axis.text.x=element_text(angle=45, size=13, hjust=1,vjust=1),
+        axis.text.y=element_text(angle=45, size=30, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_text (size = 40),
+        axis.title.y = element_text(size = 40),
+        legend.title=element_text(size=30), 
+        legend.text=element_text(size=10),
+        strip.text.x = element_text(size = 30)) 
+
+ggplot (full.df.prop %>% filter (clust.eig.rank <= 7) %>% distinct(sample, cluster_mem, .keep_all = T), aes (sample, clust.prop, fill = factor(clust.eig.rank))) +
+  geom_bar (stat = 'identity') +
+  theme_mike_doane()
+
+#Zoom into a subset of x samples
+#scale_x_discrete(expand = c(0, 0.5)) +
+#coord_flip(xlim = c(length(unique(full.df$sample))-8,length(unique(full.df$sample)))) +
+  
+
+### Filter categories by their clusters ###
+filter.cat <- 1
+clust.fil <- all.red.temp %>% 
+          rownames_to_column('cat') %>% 
+          pivot_longer (-cat, names_to = 'sample', values_to = 'abund') %>% 
+          left_join (., (ws.meta %>% dplyr::select (types, location) %>% dplyr::rename('sample' = 1)), by = 'sample') %>% 
+          semi_join (., (abund.df %>% filter (clust.bet.rank == filter.cat)), by = c('location' = 'location', 'cat' = 'cat')) %>% 
+          pivot_wider (names_from = cat, values_from = abund, values_fill = c(abund = 0)) %>% 
+          dplyr::select (-location) %>%
+          column_to_rownames('sample')
+
+##### MDS analysis
+mds <- metaMDS(clust.fil, distance = "bray", k = 2, try = 20, trymax = 20)
+mds.xy <- as.data.frame(scores(mds))
+mds.xy <- mds.xy %>% rownames_to_column('sample') %>% left_join (., (ws.meta %>% dplyr::select(types, location) %>% rename('sample' = 1)), by = c('sample' = 'sample'))
+
+ggplot (mds.xy, aes (NMDS1, NMDS2, color = location)) +
+  geom_point (size = 12) +
+  ggtitle (paste0 (types, ':' , group, '; stress = ', round(mds$stress, 3))) +
+  theme_mike_doane()
+
+
+adonis (df.t ~ location, data = mds.xy, method = 'bray')
+pairwiseAdonis::pairwise.adonis(df.t, mds.xy$location, sim.method = 'bray')
+```
+
+Make Cluster Bubble plots of abundance and centrality of nodes
+```{r}
+loc.abund.df <- all.red.temp %>% 
+  rownames_to_column('cat') %>%
+  pivot_longer (-cat, names_to = 'sample', values_to = 'abund') %>%
+  filter (abund > 0) %>% 
+  filter(!is.na(abund)) %>% 
+  left_join (., (ws.meta %>% dplyr::select (types, location) %>% dplyr::rename ('sample' = 1)), by = 'sample') %>%
+  group_by (location, cat) %>%
+  mutate (loc.n.samples = n(), loc.mean = mean(abund), loc.sd = sd(abund), loc.se = loc.sd/sqrt(n())) %>%
+  ungroup () %>%
+  dplyr::select(-sample) %>% 
+  distinct (cat, location, .keep_all = T)
+
+{ 
+  if (types == 'taxa') { 
+net.dir <- read.csv (paste0 (file.dir, 'network.final.data/jody_optimised_clusters/merged.clusters.taxa.csv'), header = TRUE)
+centrality.dir <- read.csv (paste0(file.dir, 'Net_10_20/Taxa/Network_Summary_MCL_redo/taxa_summary_table_new_mcl_exp3.csv'), header = T)
+} else if (types == 'function') { 
+net.dir <- read.csv (paste0(file.dir, 'network.final.data/jody_optimised_clusters/merged.clusters.function.csv'), header = TRUE)
+net.dir <- net.dir %>% dplyr::rename ('site' = 'location', 'cluster.name' = 'cluster')
+centrality.dir <- read.csv (paste0(file.dir, 'Net_10_20/Function/Functional_Network_MCL_Redo/function_summary_table_new_mcl_exp3.csv'), header = T)
+  }
+}
+
+
+full.df <- all.red.temp %>% 
+  rownames_to_column('cat') %>%
+  pivot_longer (-cat, names_to = 'sample', values_to = 'abund') %>%
+  filter (abund > 0) %>% 
+  filter(!is.na(abund)) %>% 
+  group_by (sample) %>%
+  mutate (sample.total = sum(abund), cat.sample.prop = abund/sample.total) %>%
+  ungroup () %>%
+  dplyr::select (-sample.total) %>%
+  left_join (., (ws.meta %>% 
+                   dplyr::select (types, location) %>% 
+                   dplyr::rename ('sample' = 1)), by = 'sample') %>%
+  left_join (., (net.dir %>% dplyr::select (1, site,cluster.name) %>% dplyr::rename ('cat'= 1)), by = c('location' = 'site', 'cat' = 'cat')) %>%
+  mutate (cluster.name = forcats::fct_explicit_na(cluster.name, na_level = 'none')) %>%
+  filter (cluster.name != 'none') %>%
+  dplyr::select (-c(sample, abund)) %>%
+  group_by (cluster.name, cat) %>%
+  mutate (cat.clust.mean = mean(cat.sample.prop)) %>%
+  dplyr::select (-cat.sample.prop) %>%
+  distinct (cluster.name, cat, .keep_all = T)
+
+if (types == 'taxa') { 
+  select.what <- c('superkingdom', 'phylum', 'class', 'order', 'family')
+  remove.what <- c('superkingdom', 'phylum', 'class', 'order')
+} else if (types == 'function') { 
+  select.what <- c('Subsystem.Level.1', 'Subsystem.Level.2')
+  remove.what <- 'Subsystem.Level.1'
+}
+
+abund.df <- loc.abund.df %>% 
+  left_join (., (net.dir %>% 
+                   dplyr::select (-clusterID) %>% 
+                   dplyr::rename ('cat'= 1)), by = c('location' = 'site', 'cat'='cat')) %>%
+  left_join (., (centrality.dir %>% dplyr::select (-c(cluster_mem, X)) %>% 
+                   dplyr::rename('cat' = 2)), by = c('location' = 'location', 'cat' = 'cat')) %>%
+  drop_na ()
+
+if (types == 'taxa') { 
+  abund.df <- abund.df %>%
+    left_join (., (group.assignment %>% 
+                   dplyr::select (select.what) %>% distinct (family, .keep_all = T)), by = c('cat' = 'family'))
+} else if (types == 'function') { 
+  abund.df <- abund.df %>%
+    left_join (., (group.assignment %>% 
+                   dplyr::select (select.what) %>% distinct (Subsystem.Level.2, .keep_all = T)), by = c('cat' = 'Subsystem.Level.2'))
+}
+
+temp.table <- full.df %>% 
+  left_join (., (abund.df %>% dplyr::select (-loc.n.samples, -loc.mean, -loc.sd, -loc.se, -cluster.name)))
+
+#write.csv (temp.table, paste0 (file.dir, '/analysis/mikedoane.figures/', 'network_node_taxonomy.csv'))
+
+cluster.rank <- abund.df %>% 
+  group_by (location, cluster.name) %>% 
+  mutate (mean.bet = mean (between_cen), mean.eig = mean(eigen_cen)) %>% #mean betweenness for each cluster
+  distinct(location, cluster.name, .keep_all = T) %>% #unqiue cluster for each location
+  arrange (location, desc(mean.bet)) %>% 
+  group_by (location) %>% 
+  mutate (clust.bet.rank = row_number()) %>% #rank cluster by location
+  ungroup () %>% 
+  arrange (location, desc(mean.eig)) %>% 
+  group_by (location) %>% 
+  mutate (clust.eig.rank = row_number()) %>% #number of 
+  dplyr::select (-c(abund, loc.n.samples, between_cen, eigen_cen, loc.mean, loc.sd, loc.se)) %>%
+  ungroup ()
+
+if (types == 'taxa') { 
+  full.df <- full.df %>% 
+    left_join (., (cluster.rank %>% dplyr::select (cluster.name, clust.bet.rank, clust.eig.rank)), by = 'cluster.name') %>%
+    left_join (., (group.assignment %>% dplyr::select (select.what) %>% distinct(family, .keep_all = T)), by = c('cat' = 'family'))
+  color.group <- sym('class')
+  cat.name <- 'families'
+} else if (types == 'function') {
+  full.df <- full.df %>%  
+  left_join (., (cluster.rank %>% 
+                   dplyr::select (-c(location, Subsystem.Level.1)) %>% 
+                   filter (clust.eig.rank <= 4)), by = 'cluster.name') %>%
+  left_join (., (group.assignment %>% dplyr::select (select.what) %>% distinct (Subsystem.Level.2, .keep_all = T)), by = c('cat' = 'Subsystem.Level.2'))
+  color.group <- sym('Subsystem.Level.1')
+  cat.name <- 'Subsystem.Level.2'
+}
+
+full.df <- full.df %>% 
+  mutate (clust.bet.name = ifelse (is.na(clust.bet.rank), NA, paste0(clust.bet.rank, location)), clust.eig.name = ifelse (is.na(clust.eig.rank), NA, paste0(clust.eig.rank, location)))
+
+ft <- full.df %>% 
+  group_by (cluster.name) %>% 
+  slice_max (order_by = cat.clust.mean, n = 5)
+
+#g <- 'Ningaloo'
+g <- 2 # which cluster from each locations?
+dice <- 10 # how many families from each cluster should be kept?
+n <- 25 # how many colors should there be?
+
+set.seed (3)
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+col=sample(col_vector, n)
+
+ggplot (full.df %>% filter (clust.bet.rank == g) %>% mutate (clust.bet.rank = factor(clust.bet.rank)) %>% group_by(cluster.name) %>% slice_max (n = dice, order_by = cat.clust.mean), aes (cluster.name, cat, color = !!color.group, size = cat.clust.mean)) +
+  geom_point () + #clust.eig.name
+  labs(color = paste0(color.group)) +
+  scale_size_continuous('Rel. Abund.', range = c(1, 15)) +
+  #facet_grid (clust.eig.rank~.) +
+  scale_color_manual(paste0(color.group), values = c(col)) +
+  guides(colour = guide_legend(override.aes = list(size=10), nrow = 5)) +
+  guides(size = guide_legend(nrow=5), byrow=TRUE) +
+  xlab ('cluster') +
+  ylab(paste0(cat.name)) +
+  theme_mike_doane() +
+  cowplot::background_grid() +
+  scale_y_discrete(expand = c(0, 0.2)) +
+  coord_cartesian(clip = "off") +
+  theme(axis.text.x=element_text(angle=0, size=20, vjust=0, hjust = 0.5),
+        axis.text.y=element_text(angle=0, size=18, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_text (size = 40),
+        axis.title.y = element_text(size = 40),
+        legend.position= 'bottom',
+        legend.justification = 'left',
+        plot.margin=unit(c(0.5,0.5,0.5,0.5),"cm"))
+
+df.otu <- df.otu.rows %>% 
+  rownames_to_column('asv') %>% 
+  pivot_longer (cols = -asv, names_to = 'sample', values_to = 'abund.asv')  %>% 
+  left_join (., (df.sample %>% dplyr::select(sample, sample.site, date)), by = 'sample') %>%
+  left_join (., (asv.patterns %>% dplyr::select (asv, sample.site, cluster.id, starts_with('tax'))), by = c('sample.site' = 'sample.site', 'asv' = 'asv')) %>%
+  filter (sample.site == g) %>%
+  filter (abund.asv > 0) %>% 
+  group_by (sample) %>%
+  mutate (sample.total = sum (abund.asv), asv.prop = abund.asv/sample.total) %>%
+  group_by (sample,cluster.id) %>% 
+  mutate (sample.clust.prop = sum(asv.prop)) %>%
+  ungroup () 
+  
+asv.clusters <- df.otu %>% 
+  dplyr::select (asv, sample, cluster.id)
+
+temp.out <- print(df.otu %>% 
+                    mutate (cluster.id = fct_explicit_na(cluster.id, na_level = 'none')) %>% 
+                    filter (cluster.id != 'none') %>% #remove NA cluster
+                    group_by (cluster.id) %>% 
+                    mutate (clust.avg = mean (sample.clust.prop)) %>% #cluster mean across all samples at a site
+                    ungroup () %>% 
+                    distinct (cluster.id, clust.avg) %>% 
+                    arrange(desc(clust.avg)))
+    
+temp.clust <- head(temp.out, n = 5)
+temp.clust.list <- temp.clust %>% 
+  pull (cluster.id)
+
+num.genera <- 10
+clust.temp <- df.otu %>% 
+  filter (cluster.id %in% temp.clust.list) %>% # keep the top 5 clusters
+  group_by (sample.site, sample, cluster.id, tax.Genus) %>% 
+  mutate (genus.sample.clust.prop = sum(asv.prop)) %>%
+  ungroup () %>%
+  group_by (sample.site, cluster.id, tax.Genus) %>%
+  mutate (genus.prop.mean = mean(genus.sample.clust.prop)) %>% 
+  ungroup() %>%
+  distinct(sample.site, cluster.id, tax.Genus, .keep_all = T) %>%
+  dplyr::select (-c(asv, sample, abund.asv, date, sample.total, asv.prop, sample.clust.prop, genus.sample.clust.prop)) %>%
+  group_by (sample.site, cluster.id) %>% 
+  arrange(desc(genus.prop.mean)) %>%
+  #top_n (n = 10, wt = genus.prop.mean) %>%
+  #slice_max (order_by = genus.prop.mean, n = num.genera) %>% 
+  distinct(sample.site, cluster.id, tax.Genus, .keep_all = T) %>%
+  ungroup ()
+
+clust.temp %>% filter (tax.Genus == 'Erythrobacter') %>% dplyr::select (cluster.id,tax.Genus, genus.prop.mean)
+
+#library(RColorBrewer)
+n <- 19
+set.seed (24)
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+col=sample(col_vector, n)
+ggplot (clust.temp %>% mutate (tax.Genus = fct_explicit_na(tax.Genus, na_level = 'unknown'), tax.Family = fct_explicit_na(tax.Family, na_level = 'unknown')) %>% mutate (cluster.id = factor(cluster.id, temp.clust.list)), aes (cluster.id, tax.Genus, color = tax.Family)) +
+  geom_point (aes(size = genus.prop.mean)) +
+  scale_size_continuous(range = c(1, 15)) +
+  facet_grid (~sample.site) +
+  scale_color_manual('Families', values = c(col)) +
+  guides(colour = guide_legend(override.aes = list(size=10))) +
+  xlab ('cluster') +
+  ylab("Genera") +
+  theme_mike_doane() +
+  cowplot::background_grid() +
+  coord_cartesian(clip = "off") +
+  guides(fill=guide_legend(nrow=2,byrow=TRUE)) +
+  theme(axis.text.x=element_text(angle=0, size=20, vjust=1, hjust = 0.5),
+        axis.text.y=element_text(angle=0, size=20, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_text (size = 40),
+        axis.title.y = element_text(size = 40),
+        legend.position = 'bottom',
+        legend.box="vertical",
+        legend.justification = 'left',
+        plot.margin=unit(c(0.5,0.5,0.5,0.5),"cm"))
+
+``` 
+
+```{r}
+types <- "taxa" #function
+
+{ 
+  if (types == 'taxa') { 
+net.dir <- read.csv (paste0 (file.dir, 'network.final.data/jody_optimised_clusters/merged.clusters.taxa.csv'), header = TRUE)
+centrality.dir <- read.csv (paste0(file.dir, 'Net_10_20/Taxa/Network_Summary_MCL_redo/taxa_summary_table_new_mcl_exp3.csv'), header = T)
+} else if (types == 'function') { 
+net.dir <- read.csv (paste0(file.dir, 'network.final.data/jody_optimised_clusters/merged.clusters.function.csv'), header = TRUE)
+net.dir <- net.dir %>% dplyr::rename ('site' = 'location', 'cluster.name' = 'cluster')
+centrality.dir <- read.csv (paste0(file.dir, 'Net_10_20/Function/Functional_Network_MCL_Redo/function_summary_table_new_mcl_exp3.csv'), header = T)
+  }
+}
+
+centralityWideBetween <- centrality.dir %>% dplyr::select (location, taxa, between_cen) %>% pivot_wider (names_from = location, values_from = between_cen, values_fill = list(clust.prop = 0))
+
+ggplot (centralityWideBetween %>% dplyr::select (taxa, Cancun, Ningaloo), aes (x = Cancun, y = Ningaloo)) +
+  geom_point () +
+  geom_abline(intercept = 0, slope = 1)
+  theme_mike_doane()
+  
+centralityPCA <- centralityWideBetween %>% column_to_rownames("taxa")
+centralityPCA[is.na(centralityPCA)] <- 0
+res.pca <- prcomp(centralityPCA, scale = TRUE)
+
+fviz_pca_ind(res.pca,
+             col.ind = "cos2", # Color by the quality of representation
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+             )
+
+fviz_pca_var(res.pca,
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+             )
+
+fviz_pca_biplot(res.pca, repel = TRUE,
+                col.var = "#2E9FDF", # Variables color
+                col.ind = "#696969"  # Individuals color
+                )
+
+
+```
+
+Calculate abundance of different modules across locations 
+```{r}
+{ 
+  if (types == 'taxa') { 
+  summary.mcl <- read.csv (paste0 (file.dir, '/Net_10_20/Taxa/Network_Summary_MCL_redo/taxa_summary_table_new_mcl_exp3.csv'), header = TRUE, row.names = 1)
+  net.dir <- read.csv (paste0(file.dir, 'network.final.data/jody_optimised_clusters/merged.clusters.taxa.csv'), header = TRUE)
+  net.dir <- net.dir %>% dplyr::rename ('cat' = 1, 'cluster_mem' = 4, 'location' = 'site')
+  summary.mcl <- summary.mcl %>% left_join (., (net.dir %>% dplyr::select(cat, location, cluster_mem)), by = c('location' = 'location', 'taxa' = 'cat'))
+} else if (types == 'function') { 
+  summary.mcl <- read.csv (paste0(file.dir, '/Net_10_20/Function/Functional_Network_MCL_redo/function_summary_table_new_mcl_exp3.csv'), header = TRUE, row.names = 1)
+  net.dir <- read.csv (paste0(file.dir, 'network.final.data/jody_optimised_clusters/merged.clusters.function.csv'), header = TRUE)
+  net.dir <- net.dir %>% dplyr::rename ('cat' = 1, 'cluster_mem' = 4)
+  summary.mcl <- summary.mcl %>% left_join (., (net.dir %>% dplyr::select(cat, location, cluster_mem)), by = c('location' = 'location', 'function.' = 'cat'))
+  }
+}
+
+###### Calculate distribution of centrality scores across locations ########
+centrality.summary <- summary.mcl %>% dplyr::select (location, eigen_cen) %>% group_by (location) %>% summarise_each(funs(mean,sd,se=sd(.)/sqrt(n())))
+dunn.test::dunn.test (summary.mcl$eigen_cen, summary.mcl$location, method = 'bh')
+############################################################################
+
+full.df <- all.red.temp %>% 
+  rownames_to_column('cat') %>%
+  pivot_longer (-cat, names_to = 'sample', values_to = 'abund') %>%
+  filter (abund > 0) %>% 
+  filter(!is.na(abund)) %>% 
+  left_join (., (ws.meta %>% dplyr::select (types, location) %>% dplyr::rename ('sample' = 1)), by = 'sample')
+
+c.rank <- full.df %>% 
+  left_join (., net.dir, by = c('location' = 'location', 'cat'='cat')) %>%
+  drop_na () %>%
+  group_by(sample) %>%
+  mutate (sample.total.sum = sum(abund)) %>% 
+  group_by (sample, cluster_mem) %>% 
+  mutate (clust.sum = sum(abund), clust.prop = clust.sum/sample.total.sum) %>% # make proportion of each cluster
+  ungroup () %>%
+  group_by (location, cluster_mem) %>%
+  mutate (mean.clust = mean(clust.prop)) %>% #calculate mean cluster proportion across location
+  distinct (cluster_mem, .keep_all = T) %>%
+  group_by (location) %>%
+  mutate (rank = order (order(mean.clust, decreasing = T))) %>%
+  ungroup()
+
+full.df.prop <- full.df %>%
+  left_join (., net.dir , by = c('location' = 'location', 'cat'='cat')) %>%
+  drop_na () %>%
+  group_by(sample) %>%
+  mutate (sample.total.sum = sum(abund)) %>% 
+  group_by (sample, cluster_mem) %>% 
+  mutate (clust.sum = sum(abund), clust.prop = clust.sum/sample.total.sum) %>% # make proportion of each cluster
+  ungroup () %>%
+  group_by (location, cluster_mem) %>%
+  mutate (mean.clust = mean(clust.prop)) %>% #calculate mean cluster proportion across location
+  distinct (sample, cluster_mem, .keep_all = T) %>%
+  arrange(location, desc(mean.clust)) %>%
+  ungroup () %>%
+  group_by (location, cluster_mem) %>%
+  mutate (clust_sum = sum()) %>%
+  ungroup () %>%
+  left_join (., (c.rank %>% dplyr::select (cluster_mem, rank)), by = 'cluster_mem') %>%
+  ungroup ()
+
+
+#### Make plot to show distribution of each cluster across datasets ordered by the most abundant cluster  
+n <- 15 # taxa = 12, func = 15
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+col=sample(col_vector, n)
+ggplot (full.df.prop  %>% distinct(sample, cluster_mem, .keep_all = T), aes (sample, clust.prop, fill = factor(rank))) +
+  geom_bar (stat = 'identity') +
+  scale_fill_manual(values = c(col)) +
+  theme_mike_doane() +
+    theme(axis.text.x=element_text(angle=45, size=13, hjust=1,vjust=1),
+        axis.text.y=element_text(angle=45, size=30, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_text (size = 40),
+        axis.title.y = element_text(size = 40),
+        legend.title=element_text(size=30), 
+        legend.text=element_text(size=25),
+        strip.text.x = element_text(size = 30))
+
+
+cluster.df <- full.df.prop %>% 
+  dplyr::select (sample, rank, clust.prop) %>% 
+  mutate (z = 'cluster') %>%
+  unite ('clusterID', c(rank, z), sep = '_', remove = TRUE) %>%
+  pivot_wider (names_from = clusterID, values_from = clust.prop, values_fill = list(clust.prop = 0)) %>%
+  column_to_rownames('sample')
+  
+
+
+comparison <- 'location' #'location', 'ocean', 'population'
+
+ws.adonis <- ws.meta %>% 
+  dplyr::select (types, comparison) %>% 
+  dplyr::rename('names' = 1) %>% 
+  semi_join (., (temp %>% rownames_to_column('sample')), by = c('names' = 'sample')) %>%
+  filter (!location == 'Tanzania')
+column <- ws.adonis %>%pull (comparison)
+
+set.seed (123)
+ws.perm.out <- adonis2 (cluster.df ~ ws.adonis$location, data = ws.adonis, by = 'terms') #margin or terms
+pairwiseAdonis::pairwise.adonis(cluster.df, ws.adonis$location, sim.method = 'bray')
+
+merged.df.prop <- full.df.prop %>% group_by (location, cluster_mem) %>% mutate (mean.clust.prop = mean(clust.prop))
+
+n <- 12
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+col=sample(col_vector, n)
+ggplot (merged.df.prop  %>% distinct(location, cluster_mem, .keep_all = T), aes (location, mean.clust.prop, fill = factor(rank))) +
+  geom_bar (stat = 'identity') +
+  scale_fill_manual(values = c(col)) +
+  theme_mike_doane() +
+  labs (fill = 'Module Rank', y = 'Relative Proportion', x = 'Location') +
+  theme(axis.text.x=element_text(angle=45, size=13, hjust=1,vjust=1),
+        axis.text.y=element_text(angle=45, size=30, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_text (size = 40),
+        axis.title.y = element_text(size = 40),
+        legend.title=element_text(size=30), 
+        legend.text=element_text(size=25),
+        strip.text.x = element_text(size = 30)) 
+```
+
+Calcualate network attributes
+iGRAPH functions
+```{r}
+library(igraph)
+working.group <- c('taxa') #taxa or function
+net.list <- list ()
+net.names <- c('cancun', 'lapaz', 'ningaloo', 'philippines')
+network.list <- list.files (paste0(file.dir,'/', 'Net_10_20/adjacency_matrices/adjacency_matrices/', working.group), pattern = 'use')
+#read adjacency matrices into R
+for ( i in 1:length(network.list)) {
+  network <- read.csv (paste0 (file.dir, '/Net_10_20/adjacency_matrices/adjacency_matrices/', working.group, '/', network.list[i]), header = TRUE, row.names = 1)
+  #network[1] <- NULL
+  print(net.names[i])
+  network <- as.matrix(network)
+  ws.net <- igraph::graph.adjacency(network, mode = 'undirected', diag = FALSE)
+  net.list[[(net.names[i])]] <- ws.net
+}
+
+if (working.group == 'taxa') {
+  taxa_mean <- read.csv (paste0 (file.dir, 'analysis/mikedoane.figures/taxa/taxa.summary.csv'), header = T, row.names = 1)
+} else if (working.group == 'function') {
+  
+  func_mean <- read.csv (paste0 (file.dir, 'analysis/mikedoane.figures/level.2/function.summary.csv'), header = T, row.names = 1)
+}
+
+m = 4 # which adjacency matrix to work from
+net <- net.list[[m]]
+wt <- walktrap.community(net) # walking trap method
+
+###### temp trial #########
+
+ang.list <- list ()
+node.list <- list ()
+wt.list <- data.frame()
+
+for (m in 1:length(net.list)) { 
+ 
+net <- net.list[[m]]
+wt <- walktrap.community(net) # walking trap method
+#wt.list[1,m] <- net.names[m]
+#wt.list[2,m] <- wt
+
+## This code below is from Guo et al 2022 Microbial co-occurrance network toplogical properties link with reactor parameters and reveal importance of low abundant genera ##
+## https://github.com/bing-g/AD-BW-network/blob/main/code-co-occurrence-network.R ##
+igraph.group1 = net
+seqdeg <- degree (igraph.group1)
+Nnodes=length(seqdeg)
+Z=seqdeg
+Z[]=0
+P=Z
+
+Membership=membership(wt)
+Seq=seq(1:Nnodes)
+for(i in 1:Nnodes){
+  L=Membership==Membership[i]         
+  neighbs=neighbors(igraph.group1,i)               
+  Kis=sum(L[neighbs])
+  SUM=0
+  SUMsq=0	
+  SUMP=0
+  Miv=Seq[L]
+  for(j in 1:sum(L)){
+    neighbsj=neighbors(igraph.group1,Miv[j])
+    Kjs=sum(L[neighbsj])
+    SUM=SUM+Kjs
+    SUMsq=SUMsq+Kjs^2
+  }
+  Z[i]=(Kis-SUM/sum(L))/sqrt(SUMsq/sum(L)-(SUM/sum(L))^2)
+  if(Kis-SUM/sum(L)==0){Z[i]=0}
+  for(k in 1:max(Membership)){
+    Lp=Membership==k
+    Kisp=sum(Lp[neighbs])
+    SUMP=SUMP+(Kisp/seqdeg[i])^2}
+  P[i]=1-SUMP
+}
+attribute_node.group1=cbind(degree=seqdeg,module=Membership,Pi=P,Zi=Z)
+ang <- as.data.frame(attribute_node.group1)
+ang <- ang %>% mutate (location = net.names[m]) %>% rownames_to_column('family')
+ang.list[[(net.names[m])]] <- ang
+
+node.degree <-as.data.frame(degree (net, normalize = T))
+node.betweenness <- as.data.frame(betweenness(net, normalized = T))
+node.degree.nm <- as.data.frame(degree (net, normalize = F))
+node.betweenness.nm <- as.data.frame(betweenness (net, normalized = F))
+node.attributes <- cbind (node.degree, node.betweenness, node.degree.nm, node.betweenness.nm)
+node.attributes <- node.attributes %>% mutate (location = net.names[m]) %>% rownames_to_column('family')
+node.list[[(net.names[m])]] <- node.attributes
+
+}
+
+ang.all <- bind_rows(ang.list)
+ang.all$location <- as.factor(ang.all$location)
+ang.all <- ang.all %>% mutate (family = gsub ("\\.", ":", family))
+
+if (working.group == 'taxa') { 
+ang.all <- ang.all %>% 
+  mutate (family = factor(family), family = gsub(" ", ":", family)) %>% 
+  left_join (., (group.assignment %>% dplyr::select (family, class,phylum)), by = 'family') %>% 
+  mutate (connector_group = ifelse (Pi > 0.62, 'among', 'other'))
+} else if (working.group == 'function') { 
+ang.all <- ang.all %>% rename('Subsystem.Level.2' = 1) %>%  mutate (Subsystem.Level.2 = factor(Subsystem.Level.2)) %>% left_join (., (group.assignment %>% dplyr::select (Subsystem.Level.1, Subsystem.Level.2)), by = 'Subsystem.Level.2') %>% mutate (connector_group = ifelse (Pi > 0.62, 'among', 'other'))
+  }
+
+node.all <- bind_rows(node.list)
+node.all <- node.all %>% 
+  dplyr::rename ('degree.norm' = 2, 'between.norm' = 3, 'degree.norm.nm' = 4, 'between.norm.nm' = 5) %>%
+  mutate_if (is.character, as.factor) #%>% 
+  #mutate (family = gsub ("\\.", " ", family))
+
+if (working.group == 'taxa') { 
+node.all <- node.all %>% left_join (., (taxa_mean %>% dplyr::select (location,family,group.mean)), by = c("location" = "location", "family"="family")) %>% left_join (., (group.assignment %>% dplyr::select (family, class,phylum) %>% mutate (family = gsub (":", ".", family))), by = 'family') %>% mutate (cat = ifelse (between.norm > 0.05& degree.norm > 0.035, 'high', 'low'))
+} else if (working.group == 'function') {
+node.all <- node.all %>% left_join (., (func_mean %>% dplyr::select (location,Subsystem.Level.2,group.mean)), by = c("location" = "location", "family"="Subsystem.Level.2")) %>% rename ('Subsystem.Level.2' = 1) %>% left_join (., (group.assignment %>% dplyr::select (Subsystem.Level.1, Subsystem.Level.2)), by = 'Subsystem.Level.2') %>% mutate (cat = ifelse (between.norm > 0.05& degree.norm > 0.035, 'high', 'low'))
+}
+
+node.all <- node.all %>% mutate_if (is.character, as.factor) %>% group_by(family, location) %>% distinct()
+
+#### ang.all dataframe ###
+ggplot (ang.all, aes (x = Pi, y = Zi, shape = location, color = phylum))+
+  geom_point (size = 5) +
+  geom_hline (yintercept = 2.5) +
+  geom_vline (xintercept = 0.62) +
+  facet_wrap (.~location, ncol = 2) +
+  coord_cartesian(xlim = c(0.2, 0.8)) +
+  #geom_text (hjust=0, vjust=0) +
+  scale_color_viridis(discrete = T, option = "magma") +
+  geom_jitter () +
+  theme_mike_doane()
+
+ggplot (ang.all %>% filter (connector_group == 'among'), aes (x = Pi, y = Zi, label = Subsystem.Level.1))+
+  geom_point (size = 5) +
+  geom_hline (yintercept = 2.5) +
+  geom_vline (xintercept = 0.62) +
+  geom_text (hjust=0, vjust=0) +
+  geom_jitter () +
+  theme_mike_doane()
+
+#### node.all ####
+library(scales)
+library(grid)
+library(gridExtra)
+#group.colors <- tibble (location = c('Cancun', 'Lapaz', 'Ningaloo', 'Philippines', 'Tanzania'), color = c('#CC6677','#AA4499','#DDCC77','#009988', '#4477AA'))
+
+#location.color <- tibble (location = c('cancun', 'lapaz', 'ningaloo', 'philippines'), color = c('#CC6677','#AA4499','#DDCC77','#009988'))
+location.color <- c('Cancun' = '#CC6677', 'La Paz' = '#4477AA', 'Ningaloo'= '#DDCC77', 'Philippines' = '#009988')
+
+node.all <- node.all %>% mutate (location = recode_factor (as.factor(location), cancun = "Cancun", lapaz = "La Paz", ningaloo = "Ningaloo", philippines = "Philippines"))
+
+legend <- ggplot (node.all, aes (x = between.norm.nm, y = degree.norm.nm)) +
+  geom_point (aes (size = group.mean, color = location, shape = location), stroke = 3) +
+  scale_size (range = c(0,30))+
+  scale_y_continuous (breaks= pretty_breaks())+
+  xlim (-0.5, 1250) +
+  facet_wrap (~location, scales = "free") +
+  scale_shape_manual(values = c(1,1,1,1)) +
+  scale_color_manual (values = location.color) +
+  guides (color = "none") +
+  #geom_text () +
+  theme_mike_doane() +
+  theme (axis.text.x = element_text (size = 40),
+         axis.text.y = element_text (size = 40),
+         axis.line = element_line (),
+         legend.position = "none")
+
+legend <- ggplot (node.all, aes (x = between.norm.nm, y = degree.norm.nm, shape = location, color = location)) +
+  geom_point (aes (size = group.mean), stroke = 3) +
+  #scale_size (range = c(0,30))+
+  scale_y_continuous (breaks= pretty_breaks())+
+  xlim (-0.5, 1250) +
+  facet_wrap (~location) +
+  scale_shape_manual(values = c(0, 0, 0,0)) +
+  scale_color_manual (values = location.color) +
+  #geom_text () +
+  theme_mike_doane() +
+  theme (axis.text.x = element_text (size = 40),
+         axis.text.y = element_text (size = 40))
+
+draw.legend <- cowplot::get_legend(legend)
+grid.newpage()
+grid.draw(draw.legend)
+
+for (q in 1:length(net.list))
+
+q <- 2
+loc.var <- names(net.list[q])
+
+ggplot (node.all %>% dplyr::filter(location %in%loc.var, degree.norm.nm > 4) %>% group_by (class) %>% mutate (mean.degree = mean(degree.norm.nm)) %>% ungroup() %>% arrange(desc(degree.norm.nm)), aes (x = phylum, degree.norm.nm)) +
+  geom_boxplot() +
+  facet_grid (location~.) +
+  theme (axis.text.x = element_text (angle = 45))
+
+######################################################################################
+
+dim(node.degree)
+print(igraph::transitivity(net)) # calculate transitivity of graph
+modularity(net, membership(wt)) # calculate the modularity of the graph
+node.betweenness <- as.data.frame(betweenness(net, normalized = T))
+igraph::gsize(net) # calculate the number of edges in the graph
+mean(node.degree[,1]) # Calculate mean node degree
+igraph::edge_density (net) # calculate edge density: number of edges/number of potential edges
+cluster_edge_betweenness (net) # calculate the module membership -- ie who belongs to which modules
+
+
+
+adj.matrix <- as_adjacency_matrix(net)
+natural.connectivity(adj.matrix, eig = NULL, norm = TRUE)
+
+ecent <- as.data.frame(eigen_centrality(net)$vector)
+ecent <- ecent %>% dplyr::rename('eigen_cent' = 1) %>% arrange (desc(eigen_cent)) %>% rownames_to_column('family') %>% mutate(family, gsub('\\.', ':', family)) %>% dplyr::select (-family) %>% dplyr::rename ('family' = 2)
+
+taxa_groups <- group.assignment %>% distinct (family, .keep_all = TRUE) %>% dplyr::select (-c(genus, species, taxid)) 
+ecent <- ecent %>% left_join (., taxa_groups, by = 'family') %>% dplyr::select (eigen_cent, superkingdom, phylum, class, order, family)
+
+E(net)
+V(net)
+l <- layout_with_kk(net)
+edge.start <- ends(net, es=E(net), names=F)[,1]
+edge.col <- V(net)$color[edge.start]
+ceb <- cluster_label_prop(net)
+plot(ceb, net, edge.color=edge.col, edge.curved=.1, vertex.label.cex = .7, layout=l) 
+
+# Returns the degree of modularity for all of the partitioned samples
+network.df <- data.frame ()
+net.names <- names(net.list)
+i =2
+for (i in 1:length(net.names)) { 
+net <- net.list[[i]] # load adjacency matrix
+
+wt <- walktrap.community(net) # walking trap method
+graph.den <- igraph::edge_density (net) #graph density
+print(graph.den)
+print(igraph::transitivity(net)) # transitivity
+graph.density(net)
+
+mod <- modularity(net, membership(wt)) #calculate modularity
+network.df[i,1] <- net.names[i]
+network.df[i,2] <- mod
+
+
+#Does degree distribution fit a power-law distribution?
+deg <- degree (net, mode = "in")
+pl <- fit_power_law(deg, xmin = 10)
+network.df [i,3] <- pl$KS.p
+
+#
+adj <- igraph::as_adjacency_matrix (net)
+mc <- MCL::mcl(adj, addLoops = TRUE)
+mc.df <- as.matrix(mc$Cluster)
+adj.names <- rownames(adj)
+rownames(mc.df) <- adj.names
+
+#clust <- data.frame(table(membership (wt))) #if walking trap clustering is used
+clust <- data.frame(table(mc.df)) # if Markov Clustering is used
+clust2 <- clust %>% filter (Freq >= 1)
+network.df[i,4] <- length(clust2$Freq)
+clust3<- clust %>% filter (Freq >=3)
+network.df[i,5] <- length(clust3$Freq)
+
+ap <- articulation.points(net)
+network.df[i,6] <- ifelse(length(ap) >=1, length(ap), 0)
+network.df[i,7] <- sum(clust2$Freq)
+network.df[i,8] <- sum(clust3$Freq)
+}
+```
+
+Read Weighted adjacency matrix
+Look at positive versus negative correlations within dataset
+NOT USING
+```{r}
+working.group <- c('taxa') #taxa or function
+abv.list <- c('Cancun', 'LaPaz', 'Ningaloo', 'Philippines')
+if (working.group == 'taxa') { 
+  which.file <- 'taxonomic'
+} else if(working.group == 'function') { 
+  which.file <- 'functional'}
+
+adj.matrix.list <- list.files(paste0(file.dir, 'Net_10_20/adjacency_matrices/weighted_adjacency_matrices/', which.file), pattern = 'weighted_adj.csv')
+
+long.list <- list ()
+i <- 1
+for (i in 1:length(adj.matrix.list)) { 
+temp <- read.csv (paste0 (file.dir, 'Net_10_20/adjacency_matrices/weighted_adjacency_matrices/', which.file, '/', adj.matrix.list[i]))
+temp.long <- temp %>% 
+  pivot_longer (-X, names_to = 'family', values_to = 'cor') %>% 
+  filter (cor != 0) %>% 
+  mutate (val.dir = ifelse((cor > 0), 'pos', 'neg'), location = abv.list[i])
+
+long.list[[i]] <- temp.long
+}
+all.adj <- do.call ('rbind', long.list)
+
+all.adj <- all.adj %>% mutate(cor.abs = abs(cor)) %>% arrange(desc(cor.abs))
+
+ggplot (all.adj, aes (location, fill = val.dir)) + #filter (cor.abs > 0.1)
+  geom_bar (position = 'fill') +
+  labs (fill = 'Correlation', y = 'Prop. of count', x = 'Location') +
+  theme_mike_doane() +
+  theme(axis.text.x=element_text(angle=45, size=13, hjust=1,vjust=1),
+        axis.text.y=element_text(angle=45, size=30, vjust=0.2, hjust = 0.9),
+        axis.title.x = element_text (size = 40),
+        axis.title.y = element_text(size = 40),
+        legend.title=element_text(size=30), 
+        legend.text=element_text(size=25),
+        strip.text.x = element_text(size = 30)) 
+
+count.df <- as.data.frame(table (all.adj[,4:5]))
+count.df <- count.df %>% group_by (location) %>% mutate ()
+
+temp.summarise <- temp.long %>% filter (location == "Cancun") %>% group_by (X) %>% summarise(freq = n())
+temp.df <- all.adj %>% filter (abs(cor) >= 0.2, location == "Cancun") %>% dplyr::select(X, family, cor) %>% left_join (., (group.assignment %>% dplyr::select (family, class) %>% mutate (family = gsub (":", "\\.", family))), by = "family") %>% left_join (., (group.assignment %>% dplyr::select (family, class) %>% mutate (family = gsub(":", "\\.", family))), by = "family") %>% dplyr::select (class.x, class.y, cor)
+chordDiagram(temp.df)
+
+chordDiagram(temp.df, annotationTrack = "grid", preAllocateTracks = list(track.height = 0.1))
+  circos.trackPlotRegion(track.index = 1, panel.fun = function(x, y) {
+  xlim = get.cell.meta.data("xlim")
+  xplot = get.cell.meta.data("xplot")
+  ylim = get.cell.meta.data("ylim")
+  sector.name = get.cell.meta.data("sector.index")
+  if(abs(xplot[2] - xplot[1]) < 10) {
+    circos.text(mean(xlim), ylim[1], sector.name, facing = "clockwise",
+                niceFacing = TRUE, adj = c(0, 0.5))
+  } else {
+    circos.text(mean(xlim), ylim[1], sector.name, facing = "inside",
+                niceFacing = TRUE, adj = c(0.5, 0))
+  }
+}, bg.border = NA)
+
+data <- matrix(sample(0:1, 400, replace=TRUE, prob=c(0.8,0.2)), nrow=20)
+network <- graph_from_adjacency_matrix(data , mode='undirected', diag=F )
+``` 
