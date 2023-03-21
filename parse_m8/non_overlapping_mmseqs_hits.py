@@ -22,7 +22,7 @@ def non_overlapping_mmseqs(m8file, mineval, verbose=False):
         if r.evalue > mineval:
             continue
         if r.query != last_query:
-            if not hits:
+            if verbose and last_query and not hits:
                 print(f"There were no hits for {last_query}", file=sys.stderr)
             for h in hits:
                 print(str(h))
