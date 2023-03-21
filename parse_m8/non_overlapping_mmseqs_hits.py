@@ -60,6 +60,4 @@ if __name__ == "__main__":
     parser.add_argument('-v', help='verbose output', action='store_true')
     args = parser.parse_args()
 
-    print(f"E valu: {args.e}", file=sys.stderr)
-
     non_overlapping_mmseqs(args.f, args.e, args.v)
