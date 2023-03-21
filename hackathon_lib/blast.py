@@ -24,8 +24,12 @@ class BlastResult():
         self.bitscore = float(bitscore)
         if query_length:
             self.query_length = int(query_length)
+        else:
+            self.query_length = None
         if subject_length:
             self.subject_length = int(subject_length)
+        else:
+            self.subject_length = None
 
     def is_significant(self):
         """
@@ -36,9 +40,11 @@ class BlastResult():
         return self.evalue < 1e-5
 
     def __str__(self):
-        return "\t".join(map(str, self.query, self.db, self.alignment_length, self.percent_id, self.gaps,
-                             self.mismatches, self.query_start, self.query_end, self.db_start, self.db_end,
-                             self.evalue, self.bitscore, self.query_length, self.subject_length))
+        output =  "\t".join(map(str, [self.query, self.db, self.alignment_length, self.percent_id, self.gaps, self.mismatches, self.query_start, self.query_end, self.db_start, self.db_end, self.evalue, self.bitscore]))
+        
+        if self.query_length and self.subject_lenth:
+            output = f"{output}\t{self.query_length}\t{self.subject_length}"
+        return output
 
 def stream_blast_results(blastf, verbose=False):
     """
