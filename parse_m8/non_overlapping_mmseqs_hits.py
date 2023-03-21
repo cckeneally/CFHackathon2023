@@ -17,7 +17,7 @@ def non_overlapping_mmseqs(m8file, mineval, verbose=False):
 
     hits = []
     last_query =  None
-    positions = set()
+    positions = {}
     for r in stream_blast_results(m8file, verbose):
         if r.evalue > mineval:
             continue
@@ -27,19 +27,23 @@ def non_overlapping_mmseqs(m8file, mineval, verbose=False):
             for h in hits:
                 print(str(h))
             hits = []
-            positions = set()
+            positions = {}
             last_query = r.query
-        keep = True
+
         qsta = r.query_start
         qend = r.query_end
         if qsta > qend:
             (qend, qsta) = (qsta, qend)
+        keep = True
         for i in range(qsta, qend + 1):
             if i in positions:
                 keep = False
+                if r.evalue < positions[i].evalue:
+                    print(f"We had a hit for {positions[i].query} -> {positions[i].db} : {positions[i].evalue} and now",
+                          f" {r.query} -> {r.db} : {r.evalue}", file=sys.stderr)
         if keep:
             for i in range(qsta, qend + 1):
-                positions.add(i)
+                positions[i] = r
             hits.append(r)
     print(list(map(str, hits)))
 
