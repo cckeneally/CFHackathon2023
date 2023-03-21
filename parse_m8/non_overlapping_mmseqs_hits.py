@@ -24,19 +24,24 @@ def non_overlapping_mmseqs(m8file, mineval, verbose=False):
         if r.query != last_query:
             if not hits:
                 print(f"There were no hits for {last_query}", file=sys.stderr)
-            print(map(str, hits))
+            for h in hits:
+                print(str(h))
             hits = []
             positions = set()
             last_query = r.query
         keep = True
-        for i in range(r.query_start, r.query_end + 1):
+        qsta = r.query_start
+        qend = r.query_end
+        if qsta > qend:
+            (qend, qsta) = (qsta, qend)
+        for i in range(qsta, qend + 1):
             if i in positions:
                 keep = False
         if keep:
-            for i in range(r.query_start, r.query_end + 1):
+            for i in range(qsta, qend + 1):
                 positions.add(i)
-                hits.append(r)
-    print(map(str, hits))
+            hits.append(r)
+    print(list(map(str, hits)))
 
 
 
