@@ -35,25 +35,26 @@ library(data.table)
 library(readxl)
 #library(clustsig)
 library(RColorBrewer)
-library(pairwiseAdonis)
+#library(pairwiseAdonis)
 library(DESeq2)
 library(reshape2)
 library(viridis)
 
 computer <- 'flinders' #flinders or personal
 
-if (computer == 'flinders') { 
-  comp.dir <- 'C:/Users/doan0033/'
-} else {   
-  comp.dir <- 'C:/Users/MichaelDoane/'
-}
-  
+comp.dir <- '.'
+
+
 file.dir <- paste0(comp.dir, 'Dropbox/network analysis/')
+
+
 ws.meta <- read_excel(paste(file.dir, 'analysis', 'sample.meta.xlsx', sep = '/'), sheet = 'overlap')
 seq.meta <- read_excel(paste(file.dir, 'analysis', 'sample.meta.xlsx', sep = '/'), sheet = 'seq.meta')
 r.source <- paste(comp.dir, 'Dropbox/IMOS_project/r_markdown', sep = '/')
+
 source (paste(r.source, 'common.scripts', 'theme_mike_doane.r', sep = "/")) # Theme Mike Doane for ggplot
 source (paste(r.source, 'common.scripts', 'theme_mike_doane1.r', sep = "/")) # Theme Mike Doane for ggplot
+
 group.colors <- tibble (location = c('Cancun', 'Lapaz', 'Ningaloo', 'Philippines', 'Tanzania'), color = c('#CC6677','#AA4499','#DDCC77','#009988', '#4477AA'))
 ocean.colors <- tibble (ocean = c('Atlantic', 'Indian', 'Pacific'), color = c('#CC6677', '#4477AA', '#DDCC77'))
 population.colors <- tibble (population = c('Atlantic', 'Indo-Pacific'), color = c('#cc6677', '#4477AA'))
@@ -62,9 +63,9 @@ population.colors <- tibble (population = c('Atlantic', 'Indo-Pacific'), color =
 #created metadata in this analysis
 master.meta <- c('ws.meta', 'seq.meta', 'check', 'df.meta', 'group.colors', 'ocean.colors', 'population.colors', 'group.assignment', 'all.t', 'all.out', 'all.red.temp', 'all.red.temp.t')
 
-
-#dplyr::filter(taxa != c("LaPazWS6", "LaPazWSB", "LaPazWSF")) %>%
 ```
+
+
 
 Main code chunk for pulling and organizing data into R
 ```{r}
