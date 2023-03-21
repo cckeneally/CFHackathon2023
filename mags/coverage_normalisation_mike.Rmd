@@ -21,10 +21,32 @@ library(tidyverse)
 
 ```{r import data}
 
+#################################################################################
+# Set up the main dataset for downstream analysis
+#################################################################################
+
 # read in the df
 
 coverage_df <- read.csv(file = 'corrected_coverage.tsv', sep = '\t')
 colnames(coverage_df) <- gsub( "X", "", colnames(coverage_df))
+names(coverage_df)[1] <- "contig"
+
+# read cross assembly length
+
+x_assembly_length <- read.csv(file = 'cross_assembly_lengths.csv')
+
+# read cross assembly mmseqs
+
+x_assembly_mmseqs <- read.csv (file = 'cross-assembly-mmseqs_lca.txt', sep = '\t', header = FALSE)
+names(x_assembly_mmseqs) <- c('contig','NCBI_id','taxa_rannk', 'lca')
+x_assembly_mmseqs <- x_assembly_mmseqs %>% select (-c(5:8))
+
+# add the assembly data to the coverage_df 
+
+coverage_df <- coverage_df %>% left_join (x_assembly_length, by = "contig") %>% left_join (x_assembly_mmseqs, by = "contig")
+
+#################################################################################
+
 
 # get the Patient and Dates
 spl <- strsplit(as.character(colnames(coverage_df)), "_")
@@ -45,6 +67,11 @@ patients_with_multiple_samples <- names(table(Patient)[table(Patient) > 1])
 total_samples_multi_patient <- sum(table(Patient)[table(Patient) > 1])
 
 #### calculate coefficient of variation
+#"106884" "111292" "112869" "112869" "125549" "128205" "131693" "131697" "144743" "147002" "156575" "156575"
+#"158671" "159396" "159397" "159397" "159828" "165149" "165149" "183461" "184511" "623361" "639354" "642660" "650003"
+#"658355" "658355" "658355" "673895" "673895" "676138" "698917" "698917" "698917" "715927" "748160" "748160" "748699"
+#"748699" "752797" "753522" "756934" "763742" "768745" "770590" "770590" "778851" "785991" "785991" "785991" "788707"
+#"788707" "788707" "788707" "802971" "825012" "825012" "875028" "892355" "895293" "983493"
 
 patient_788707_df <- coverage_df[,grepl("788707", colnames(coverage_df))]
 
