@@ -11,3 +11,7 @@ RelabundGenera <- sweep(GenusTable,2,colSums(GenusTable),"/") #Sweeps cols, divi
 FilteredGeneraRel <- RelabundGenera[which(apply(RelabundGenera,1,max)>0.1),]
 FGR <- as.data.frame(t(FilteredGeneraRel))
 write.table(FGR, file = "FilteredGenera.csv", col.names=NA)
+
+#Upload full non-filt
+GR <- as.data.frame(RelabundGenera)
+write.table(GR, file = "RelGenera_NoFilter.csv", col.names=NA)
